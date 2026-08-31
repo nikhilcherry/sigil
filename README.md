@@ -70,9 +70,9 @@ Stage 5/5 · Re-verification     VERIFIED
 
 ---
 
-## The three stages
+## The stages
 
-### 1 · Face identification
+### 1 · Face encoding
 
 Two interchangeable backends, both emitting L2-normalised vectors compared by
 cosine similarity:
@@ -98,7 +98,53 @@ That gap is what makes a fixed threshold defensible, and `tests/test_face.py`
 asserts it on every run so a model or preprocessing change cannot quietly erode
 it.
 
-### 2 · Web / social search
+### 2 · Identification — turning a face into a name
+
+This stage exists because of a hole in the obvious design. Bluesky has no face
+index, so the social search can only be seeded by *text*. That leaves the
+pipeline unable to answer the question the task actually asks — "who is this?" —
+because you would have had to know the answer in order to ask. Worse, a query
+left over from a previous run silently searches the wrong person and reports
+"no match", which reads as the tool failing rather than as a mistake.
+
+So `sigil` builds a local face→name index of public figures:
+
+1. Wikipedia's **most-viewed articles** across ten language editions (English
+   plus Hindi, Tamil, Telugu, Malayalam, Bengali, Marathi, Kannada, Spanish,
+   French) — this is where public figures concentrate, and the non-English
+   editions matter a great deal for non-Western coverage.
+2. Each title is resolved through **Wikidata**, keeping only items whose `P31`
+   (instance of) includes `Q5` (human). Without that check the index fills with
+   film posters and album covers, which do contain faces.
+3. The **Wikimedia Commons** portrait for each person is downloaded and encoded
+   with the same face model as everything else.
+
+```bash
+sigil index build            # harvest + encode; keyless, no API keys at all
+sigil index info             # what's in it
+sigil identify photo.jpg     # just the naming step
+```
+
+Then a query becomes optional. Omit it and the face is named first, and the name
+seeds the social search:
+
+```bash
+sigil run photo.jpg          # who is this → find their posts → anchor
+sigil run photo.jpg -q "…"   # skip identification, search directly
+```
+
+Naming a stranger is a higher-stakes call than confirming a match you were
+already looking for, so this stage uses a stricter bar (0.45 vs 0.38 cosine).
+Below it, the pipeline says it does not know rather than guessing — a wrong name
+would send the social search after the wrong person entirely.
+
+**This does not make it a whole-web face search.** The index covers people
+notable enough for a well-viewed encyclopaedia article. A private individual is
+not in it and will not be found, which is a deliberate boundary rather than a
+gap to close: being in this index is a consequence of public notability, and the
+whole thing is reproducible from public sources by anyone who runs the builder.
+
+### 3 · Web / social search
 
 **Bluesky (AT Protocol)** is the primary provider, chosen because its AppView
 serves `app.bsky.actor.searchActors`, `app.bsky.actor.getProfile` and
@@ -124,7 +170,7 @@ Every network call is recorded into the evidence bundle's `search_trace` — the
 endpoints hit, the parameters sent, and the result counts — so a run can be
 audited after the fact rather than taken on trust.
 
-### 3 · Blockchain verification
+### 4 · Blockchain verification
 
 `contracts/SigilRegistry.sol` is a small append-only registry:
 
@@ -248,8 +294,10 @@ searches for people by face; it has no business being reachable from off-box.
 
 | command | stage | what it does |
 |---|---|---|
-| `sigil run IMAGE -q QUERY` | 1–5 | the full pipeline |
+| `sigil run IMAGE [-q QUERY]` | all | the full pipeline; omit `-q` to identify first |
 | `sigil scan IMAGE` | 1 | detect and encode only |
+| `sigil identify IMAGE` | 2 | name the face from the local index |
+| `sigil index build` / `info` | — | build or inspect the face→name index |
 | `sigil search IMAGE -q QUERY` | 1–3 | search and match, no chain |
 | `sigil anchor` | 4 | anchor an existing bundle |
 | `sigil verify` | 5 | re-verify against chain state |
@@ -296,11 +344,18 @@ on yourself, on a consenting subject, or on a public figure for a demonstration.
 
 **On the technique itself:**
 
-- **Not a face-search engine.** Bluesky exposes no face index, so retrieval is
-  seeded by *text* — the query terms find candidate accounts, and only then does
-  the face model verify them. A person whose account is unrelated to any query
-  you supply will not be found. This is a genuine search over live data, but it
-  is not equivalent to PimEyes-style whole-web face indexing.
+- **Not a whole-web face search.** Bluesky exposes no face index, so retrieval
+  is seeded by *text*. The identity index closes that loop for public figures —
+  a face becomes a name, and the name seeds the search — but it only covers
+  people notable enough for a well-viewed Wikipedia article. A private
+  individual is not in it and will not be found. This is a genuine search over
+  live data; it is not equivalent to PimEyes-style indexing of the open web, and
+  it is not intended to be.
+- **Identification can be confidently wrong.** The index returns the nearest
+  known face, and "nearest" is not "correct". Lookalikes and poor-quality
+  portraits are the failure mode. Candidates below 0.45 cosine are rejected
+  rather than reported, and the runner-up scores are always shown so the margin
+  is visible.
 - **False positives are possible.** A cosine threshold is a decision boundary,
   not proof of identity. Similarity is recorded on-chain precisely so a
   downstream reader can apply their own bar. Twins, close relatives, and heavily

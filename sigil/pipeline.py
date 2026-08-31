@@ -16,6 +16,11 @@ from .face import Face, decode_image, largest_face, load_encoder
 from .search import BlueskyProvider, SerpApiLensProvider
 from .search.matcher import MatchResult, search_and_match
 
+# Naming a stranger is a higher-stakes call than confirming a match you were
+# already looking for, so the identity index uses a stricter bar than the
+# social-search threshold.
+IDENTITY_THRESHOLD = {"insightface": 0.45, "opencv": 0.42}
+
 
 class PipelineError(RuntimeError):
     pass
@@ -81,6 +86,40 @@ def build_providers(cfg: Config, probe_url: str | None) -> list:
     return providers
 
 
+def identify_queries(encoder, face, emit, top: int = 3) -> list[str]:
+    """Turn a face into candidate names to search for.
+
+    This is what lets the pipeline answer "who is this" rather than requiring
+    the caller to already know. Names below the index threshold are dropped
+    rather than guessed at - a wrong name would send the social search off after
+    the wrong person entirely, which is worse than admitting no idea.
+    """
+    from .identify import IdentityIndex
+
+    try:
+        index = IdentityIndex.load(encoder)
+    except (FileNotFoundError, RuntimeError) as exc:
+        emit({"type": "identify", "available": False, "reason": str(exc)})
+        return []
+
+    hits = index.query(face.embedding, top=top)
+    threshold = IDENTITY_THRESHOLD.get(encoder.name, 0.38)
+    named = [h for h in hits if h.similarity >= threshold]
+    emit({
+        "type": "identify",
+        "available": True,
+        "index_size": len(index),
+        "threshold": threshold,
+        "hits": [
+            {"name": h.identity.name, "qid": h.identity.qid,
+             "similarity": round(h.similarity, 4), "source": h.identity.source,
+             "image_url": h.identity.image_url, "accepted": h.similarity >= threshold}
+            for h in hits
+        ],
+    })
+    return [h.identity.name for h in named]
+
+
 def run_pipeline(
     source: str,
     query: str,
@@ -106,6 +145,23 @@ def run_pipeline(
         "crop": face_crop_data_uri(image_bytes, probe_ref.bbox),
     })
     emit({"type": "stage", "stage": "scan", "status": "done"})
+
+    # No query supplied means "you tell me who this is" - the whole point of
+    # having an identity index.
+    if not query.strip():
+        emit({"type": "stage", "stage": "identify", "status": "start"})
+        names = identify_queries(encoder, face, emit)
+        emit({"type": "stage", "stage": "identify", "status": "done"})
+        if not names:
+            raise PipelineError(
+                "no query given and the face did not match the identity index. "
+                "Build or extend the index with `sigil index build`, or pass an "
+                "explicit --query."
+            )
+        query = names[0]
+        emit({"type": "query", "query": query, "derived": True, "alternatives": names})
+    else:
+        emit({"type": "query", "query": query, "derived": False, "alternatives": []})
 
     emit({"type": "stage", "stage": "search", "status": "start"})
     providers = build_providers(cfg, probe_url)

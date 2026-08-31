@@ -145,3 +145,25 @@ def verification_panel(v, title: str = "Verification") -> None:
             expand=False,
         )
     )
+
+
+def identity_table(event: dict[str, Any], echo: bool = False):
+    """Render identity-index candidates, marking which cleared the bar."""
+    t = Table(title=f"Identity index · {event.get('index_size', '?')} known faces",
+              header_style="bold", border_style="dim")
+    t.add_column("similarity", justify="right")
+    t.add_column("name")
+    t.add_column("source", style="dim")
+    threshold = event.get("threshold", 0.45)
+    for h in event.get("hits", []):
+        ok = h.get("accepted", h["similarity"] >= threshold)
+        t.add_row(
+            Text(f"{h['similarity']:.4f}", style="bold green" if ok else "yellow"),
+            Text(h["name"], style="bold" if ok else "dim"),
+            h.get("source", ""),
+        )
+    t.caption = f"accepted at ≥ {threshold:.2f} cosine"
+    if echo:
+        console.print(t)
+        return None
+    return t

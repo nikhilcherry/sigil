@@ -21,7 +21,20 @@ echo "=============================================================="
 run chain reset --yes || true
 run backends
 run scan "$PROBE"
-run run "$PROBE" -q "$QUERY"
+
+# Face -> name, before any search. Skipped cleanly if no index has been built.
+if "$PY" -m sigil.cli index info >/dev/null 2>&1; then
+  run index info
+  run identify "$PROBE"
+  echo
+  echo "\$ sigil run $PROBE          # no query: the face names itself"
+  "$PY" -m sigil.cli run "$PROBE"
+else
+  echo
+  echo "  (no identity index — build one with 'sigil index build' to run the"
+  echo "   pipeline from a face alone; falling back to an explicit query)"
+  run run "$PROBE" -q "$QUERY"
+fi
 run verify --probe "$PROBE" --recheck-source
 run tamper --field match.text
 

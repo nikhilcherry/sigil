@@ -166,6 +166,13 @@ button:disabled{opacity:.34;cursor:not-allowed}
 .empty{padding:52px 20px;text-align:center;color:var(--faint);font-size:11.5px;letter-spacing:.1em;line-height:2.1}
 .err{margin:14px;padding:12px 14px;border:1px solid var(--fail);color:var(--fail);font-size:12px;background:rgba(255,82,82,.07)}
 .hide{display:none!important}
+.idrow{display:flex;align-items:center;gap:12px;padding:9px 14px;border-bottom:1px solid var(--rule);font-size:12px}
+.idrow:last-child{border-bottom:0}
+.idrow .sc{width:62px;color:var(--faint);text-align:right}
+.idrow .nm{flex:1;color:var(--dim)}
+.idrow .src{color:var(--faint);font-size:10.5px}
+.idrow.ok .sc,.idrow.ok .nm{color:var(--amber)}
+.idrow.ok .nm{font-weight:700}
 .actions{display:flex;gap:10px;padding:14px;border-top:1px solid var(--rule);flex-wrap:wrap}
 .cursor{display:inline-block;width:7px;height:12px;background:var(--amber);animation:blink .9s steps(2) infinite;vertical-align:-1px}
 @keyframes blink{50%{opacity:0}}
@@ -198,9 +205,13 @@ footer{margin-top:34px;padding-top:16px;border-top:1px solid var(--rule);color:v
         </div>
         <input type="file" id="file" accept="image/*" class="hide">
 
-        <label class="f"><i>Search query</i>
-          <input type="text" id="query" placeholder="a name, handle or topic" value="AOC">
+        <label class="f"><i>Search query <span style="color:var(--faint);letter-spacing:0;text-transform:none">— optional</span></i>
+          <input type="text" id="query" placeholder="leave empty to identify from the face">
         </label>
+        <div id="qhint" style="font-size:10.5px;color:var(--faint);margin-top:6px;line-height:1.7">
+          Empty → the face is matched against the local identity index first, and the
+          name it returns seeds the social search.
+        </div>
 
         <div class="row2" style="margin-top:14px">
           <label class="f" style="margin:0"><i>Backend</i>
@@ -227,10 +238,11 @@ footer{margin-top:34px;padding-top:16px;border-top:1px solid var(--rule);color:v
       <div class="body" style="padding:4px 14px">
         <ul class="ladder" id="ladder">
           <li data-s="scan"><span class="n">1</span><span><span class="t">Face scan</span><span class="sub">detect + encode</span></span></li>
-          <li data-s="search"><span class="n">2</span><span><span class="t">Live search</span><span class="sub">AT Protocol</span></span></li>
-          <li data-s="match"><span class="n">3</span><span><span class="t">Face match</span><span class="sub">cosine vs threshold</span></span></li>
-          <li data-s="anchor"><span class="n">4</span><span><span class="t">Anchor</span><span class="sub">keccak256 → chain</span></span></li>
-          <li data-s="verify"><span class="n">5</span><span><span class="t">Re-verify</span><span class="sub">against chain state</span></span></li>
+          <li data-s="identify"><span class="n">2</span><span><span class="t">Identify</span><span class="sub">face → name</span></span></li>
+          <li data-s="search"><span class="n">3</span><span><span class="t">Live search</span><span class="sub">AT Protocol</span></span></li>
+          <li data-s="match"><span class="n">4</span><span><span class="t">Face match</span><span class="sub">cosine vs threshold</span></span></li>
+          <li data-s="anchor"><span class="n">5</span><span><span class="t">Anchor</span><span class="sub">keccak256 → chain</span></span></li>
+          <li data-s="verify"><span class="n">6</span><span><span class="t">Re-verify</span><span class="sub">against chain state</span></span></li>
         </ul>
       </div>
     </div>
@@ -254,6 +266,11 @@ footer{margin-top:34px;padding-top:16px;border-top:1px solid var(--rule);color:v
 
   <!-- ============ right readout ============ -->
   <div>
+    <div class="panel hide" id="idpanel">
+      <h2>Identity index <span id="id-size" style="color:var(--faint);letter-spacing:.06em;text-transform:none"></span></h2>
+      <div id="idrows"></div>
+    </div>
+
     <div class="panel">
       <h2>Search <span id="providers" style="letter-spacing:.06em;text-transform:none;color:var(--faint)"></span></h2>
       <div class="metrics">
@@ -360,6 +377,10 @@ function loadFile(f){
     drop.classList.add("has");
     drop.querySelector("p").style.display = "none";
     $("run").disabled = false;
+    // A query left over from the previous face silently searches for the wrong
+    // person and reports "no match", which reads as the tool failing rather
+    // than as the operator's mistake. Reset it with the probe.
+    $("query").value = "";
   };
   r.readAsDataURL(f);
 }
@@ -379,15 +400,16 @@ function resetStages(){
 /* ---------- run ---------- */
 $("run").onclick = async () => {
   const query = $("query").value.trim();
-  if(!probeB64 || !query) return;
+  if(!probeB64) return;
 
   // reset
   cands = []; originalHash = null;
   $("sheet").innerHTML = ""; $("sheet-empty").classList.remove("hide");
-  ["matchpanel","chainpanel","verifypanel","probepanel"].forEach(i => $(i).classList.add("hide"));
+  ["matchpanel","chainpanel","verifypanel","probepanel","idpanel"].forEach(i => $(i).classList.add("hide"));
   $("errbox").innerHTML = "";
   ["m-fetched","m-faces","m-calls"].forEach(i => $(i).textContent = "0");
   $("m-top").textContent = "0.000";
+  $("query").style.color = "";
   resetStages();
 
   const btn = $("run");
@@ -448,6 +470,31 @@ function handle(e){
 
     case "providers":
       $("providers").textContent = "· " + e.providers.join(", ");
+      break;
+
+    case "identify":
+      if(!e.available){
+        stage("identify","bad","no index — run: sigil index build");
+        break;
+      }
+      $("idpanel").classList.remove("hide");
+      $("id-size").textContent = `· ${e.index_size.toLocaleString()} known faces`;
+      $("idrows").innerHTML = e.hits.map(h => `
+        <div class="idrow ${h.accepted ? "ok" : ""}">
+          <span class="sc">${h.similarity.toFixed(4)}</span>
+          <span class="nm">${h.name}</span>
+          <span class="src">${h.source}</span>
+        </div>`).join("");
+      break;
+
+    case "query":
+      if(e.derived){
+        stage("identify","ok",e.query);
+        $("query").value = e.query;
+        $("query").style.color = "var(--amber)";
+      }else{
+        stage("identify",null,"skipped — query given");
+      }
       break;
 
     case "candidate":

@@ -58,7 +58,8 @@ def cli() -> None:
 
 @cli.command()
 @click.argument("image")
-@click.option("-q", "--query", required=True, help="Search terms to seed the social search.")
+@click.option("-q", "--query", default="",
+              help="Search terms. Omit to identify the face from the index first.")
 @click.option("--backend", type=click.Choice(["auto", "insightface", "opencv"]),
               default=None, help="Face recognition backend.")
 @click.option("--threshold", type=float, default=None, help="Cosine similarity cut-off.")
@@ -74,7 +75,8 @@ def run(image, query, backend, threshold, max_images, chain_backend, no_anchor, 
                chain_backend=chain_backend)
     total = 3 if no_anchor else 5
 
-    console.print(f"[bold]sigil[/bold] {__version__}  ·  query [cyan]{query!r}[/cyan]  "
+    shown = repr(query) if query else "[dim]from face[/dim]"
+    console.print(f"[bold]sigil[/bold] {__version__}  ·  query [cyan]{shown}[/cyan]  "
                   f"·  chain [magenta]{cfg.chain_backend}[/magenta]")
 
     with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"),
@@ -83,6 +85,12 @@ def run(image, query, backend, threshold, max_images, chain_backend, no_anchor, 
         task = progress.add_task("searching", total=cfg.max_images, note="")
 
         def on_event(event: dict) -> None:
+            if event.get("type") == "identify" and event.get("available"):
+                progress.console.print(report.identity_table(event))
+            elif event.get("type") == "query" and event.get("derived"):
+                progress.console.print(
+                    f"[dim]identified as[/dim] [bold cyan]{event['query']}[/bold cyan]"
+                )
             if event.get("type") == "progress":
                 progress.update(
                     task,
@@ -147,7 +155,7 @@ def scan(image, backend):
 
 @cli.command()
 @click.argument("image")
-@click.option("-q", "--query", required=True)
+@click.option("-q", "--query", default="")
 @click.option("--backend", type=click.Choice(["auto", "insightface", "opencv"]), default=None)
 @click.option("--threshold", type=float, default=None)
 @click.option("--max-images", type=int, default=None)
@@ -282,6 +290,85 @@ def chain_reset():
         console.print(f"[yellow]removed {STATE_PATH}[/yellow]")
     else:
         console.print("[dim]no local chain state to remove[/dim]")
+
+
+@cli.command()
+@click.argument("image")
+@click.option("--backend", type=click.Choice(["auto", "insightface", "opencv"]), default=None)
+@click.option("--top", default=5, show_default=True, help="How many candidates to show.")
+def identify(image, backend, top):
+    """Name the face in IMAGE using the local identity index."""
+    from .identify import IdentityIndex
+    from .pipeline import IDENTITY_THRESHOLD
+
+    cfg = _cfg(face_backend=backend)
+    try:
+        image_bytes, _ = load_probe_bytes(image, cfg)
+        face, ref, encoder = scan_probe(image_bytes, cfg)
+        index = IdentityIndex.load(encoder)
+    except (PipelineError, FileNotFoundError, RuntimeError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    hits = index.query(face.embedding, top=top)
+    threshold = IDENTITY_THRESHOLD.get(encoder.name, 0.45)
+    report.identity_table({
+        "index_size": len(index),
+        "threshold": threshold,
+        "hits": [{"name": h.identity.name, "similarity": round(h.similarity, 4),
+                  "source": h.identity.source, "qid": h.identity.qid,
+                  "accepted": h.similarity >= threshold} for h in hits],
+    }, echo=True)
+
+
+@cli.group()
+def index() -> None:
+    """Build or inspect the face-to-name identity index."""
+
+
+@index.command("build")
+@click.option("--langs", default=None,
+              help="Comma-separated wiki languages (default: a 10-language spread).")
+@click.option("--months", default=3, show_default=True,
+              help="How many months of most-viewed articles to harvest.")
+@click.option("--limit", type=int, default=None, help="Cap the number of portraits.")
+@click.option("--backend", type=click.Choice(["auto", "insightface", "opencv"]), default=None)
+def index_build(langs, months, limit, backend):
+    """Harvest public figures from Wikipedia/Wikidata and encode their faces."""
+    from .identify import DEFAULT_LANGS, build_index
+
+    encoder = load_encoder(_cfg(face_backend=backend).face_backend)
+    chosen = tuple(x.strip() for x in langs.split(",")) if langs else DEFAULT_LANGS
+    console.print(f"[dim]building identity index · backend {encoder.name} · "
+                  f"langs {', '.join(chosen)}[/dim]")
+    count = build_index(encoder, langs=chosen, months=months, limit=limit,
+                        on_progress=lambda m: console.print(f"[dim]{m}[/dim]"))
+    console.print(f"[green]indexed {count} faces[/green]")
+
+
+@index.command("info")
+def index_info():
+    """Show what is currently in the identity index."""
+    from .identify import IdentityIndex
+
+    try:
+        idx = IdentityIndex.load()
+    except FileNotFoundError as exc:
+        raise click.ClickException(str(exc)) from exc
+    from rich.panel import Panel
+    from rich.table import Table
+
+    t = Table.grid(padding=(0, 2))
+    t.add_column(style="dim", justify="right")
+    t.add_column()
+    t.add_row("faces", str(len(idx)))
+    t.add_row("backend", idx.backend)
+    t.add_row("dimensions", str(idx.vectors.shape[1]))
+    sources = {}
+    for i in idx.identities:
+        sources[i.source] = sources.get(i.source, 0) + 1
+    for src, n in sorted(sources.items(), key=lambda kv: -kv[1]):
+        t.add_row(src, str(n))
+    console.print(Panel(t, title="Identity index", border_style="cyan", expand=False))
 
 
 @cli.command()

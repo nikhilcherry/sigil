@@ -199,9 +199,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _start_run(self) -> None:
         body = self._body()
+        # An empty query is legitimate: it means "identify the face first".
         query = (body.get("query") or "").strip()
-        if not query:
-            raise ValueError("a search query is required")
 
         raw = body.get("image_b64") or ""
         if "," in raw[:64]:  # strip a data: URI prefix if the browser sent one

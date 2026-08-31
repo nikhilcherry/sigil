@@ -1,0 +1,271 @@
+"""Face -> name, from a locally built index of labelled public portraits.
+
+Why this exists: Bluesky has no face index, so the social search can only be
+seeded by text. That leaves the pipeline unable to answer the question the task
+actually poses - "who is this?" - because you had to know the answer to ask.
+
+This closes that loop. It builds a local index of faces with known names,
+harvested from Wikipedia's most-viewed articles (which is where public figures
+concentrate) joined to Wikidata for the "is a human" check and to Wikimedia
+Commons for the portrait. Matching a probe against that index yields candidate
+names, which then seed the live social search.
+
+The index deliberately covers public figures only. It is built from an
+encyclopaedia, so being in it is a consequence of public notability rather than
+of having been scraped, and the whole thing is reproducible from source by
+anyone who runs the builder.
+"""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Callable, Iterable
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+from typing import Any
+
+import numpy as np
+
+from .config import MODELS_DIR
+from .face import decode_image, largest_face
+from .search.http import fetch_image, make_session
+
+PAGEVIEWS = "https://wikimedia.org/api/rest_v1/metrics/pageviews/top/{wiki}/all-access/{ym}/all-days"
+DEFAULT_LANGS = ("en", "hi", "ta", "te", "ml", "bn", "mr", "kn", "es", "fr")
+INDEX_VECTORS = MODELS_DIR / "identity-index.npz"
+INDEX_META = MODELS_DIR / "identity-index.json"
+
+# Article titles that are never people, but do rank highly.
+SKIP_PREFIXES = ("Special:", "Wikipedia:", "Main_Page", "Portal:", "File:",
+                 "Help:", "Category:", "Talk:", "विशेष:", "சிறப்பு:")
+
+
+@dataclass
+class Identity:
+    name: str
+    qid: str
+    image_url: str
+    source: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"name": self.name, "qid": self.qid,
+                "image_url": self.image_url, "source": self.source}
+
+
+@dataclass
+class IdentityHit:
+    identity: Identity
+    similarity: float
+
+
+# --------------------------------------------------------------------- harvest
+
+
+def _months(count: int) -> list[str]:
+    from datetime import date
+
+    out, d = [], date.today().replace(day=1)
+    for _ in range(count):
+        d = (d.replace(day=1) - __import__("datetime").timedelta(days=1)).replace(day=1)
+        out.append(f"{d.year}/{d.month:02d}")
+    return out
+
+
+def popular_titles(session, langs: Iterable[str], months: int = 3) -> dict[str, set[str]]:
+    """Most-viewed article titles per wiki - where public figures concentrate."""
+    found: dict[str, set[str]] = {}
+    for lang in langs:
+        titles: set[str] = set()
+        for ym in _months(months):
+            url = PAGEVIEWS.format(wiki=f"{lang}.wikipedia", ym=ym)
+            try:
+                r = session.get(url, timeout=30)
+                if r.status_code != 200:
+                    continue
+                for art in r.json()["items"][0]["articles"]:
+                    t = art["article"]
+                    if not t.startswith(SKIP_PREFIXES):
+                        titles.add(t)
+            except Exception:  # noqa: BLE001 - a missing month is not fatal
+                continue
+        if titles:
+            found[lang] = titles
+    return found
+
+
+def _chunks(seq: list, n: int):
+    for i in range(0, len(seq), n):
+        yield seq[i:i + n]
+
+
+def resolve_people(session, lang: str, titles: list[str]) -> list[Identity]:
+    """Join titles -> Wikidata item -> (is human?, portrait) -> Identity."""
+    api = f"https://{lang}.wikipedia.org/w/api.php"
+    qid_by_title: dict[str, str] = {}
+    thumb_by_title: dict[str, str] = {}
+
+    for batch in _chunks(titles, 40):
+        try:
+            r = session.get(api, params={
+                "action": "query", "format": "json", "formatversion": "2",
+                "prop": "pageprops|pageimages", "ppprop": "wikibase_item",
+                "piprop": "original", "titles": "|".join(batch),
+            }, timeout=40)
+            pages = r.json().get("query", {}).get("pages", [])
+        except Exception:  # noqa: BLE001
+            continue
+        for pg in pages:
+            qid = (pg.get("pageprops") or {}).get("wikibase_item")
+            img = (pg.get("original") or {}).get("source")
+            if qid and img:
+                qid_by_title[pg["title"]] = qid
+                thumb_by_title[pg["title"]] = img
+
+    out: list[Identity] = []
+    # Reverse the map once; looking the title up per entity turned this into an
+    # O(titles x entities) scan over a few thousand of each.
+    title_by_qid = {q: t for t, q in qid_by_title.items()}
+    qids = list(qid_by_title.values())
+    label_lang = "en"
+    for batch in _chunks(qids, 40):
+        try:
+            r = session.get("https://www.wikidata.org/w/api.php", params={
+                "action": "wbgetentities", "format": "json",
+                "ids": "|".join(batch), "props": "claims|labels",
+                "languages": f"{label_lang}|{lang}",
+            }, timeout=40)
+            entities = r.json().get("entities", {})
+        except Exception:  # noqa: BLE001
+            continue
+        for qid, ent in entities.items():
+            claims = ent.get("claims", {})
+            # P31 (instance of) must include Q5 (human). Without this the index
+            # fills up with film posters and album covers, which do contain faces.
+            is_human = any(
+                (c.get("mainsnak", {}).get("datavalue", {}).get("value", {}) or {}).get("id") == "Q5"
+                for c in claims.get("P31", [])
+            )
+            if not is_human:
+                continue
+            labels = ent.get("labels", {})
+            name = (labels.get(label_lang) or labels.get(lang) or {}).get("value")
+            if not name:
+                continue
+            title = title_by_qid.get(qid)
+            if title is None:
+                continue
+            out.append(Identity(name=name, qid=qid,
+                                image_url=thumb_by_title[title],
+                                source=f"{lang}.wikipedia"))
+    return out
+
+
+# ----------------------------------------------------------------------- build
+
+
+def build_index(
+    encoder,
+    langs: Iterable[str] = DEFAULT_LANGS,
+    months: int = 3,
+    limit: int | None = None,
+    on_progress: Callable[[str], None] | None = None,
+) -> int:
+    """Harvest, encode and persist the identity index. Returns the face count."""
+    say = on_progress or (lambda _: None)
+    session = make_session()
+
+    say("collecting popular article titles")
+    by_lang = popular_titles(session, langs, months)
+
+    people: dict[str, Identity] = {}
+    for lang, titles in by_lang.items():
+        found = resolve_people(session, lang, sorted(titles))
+        for ident in found:
+            people.setdefault(ident.qid, ident)
+        say(f"  {lang}: {len(titles)} titles -> {len(found)} people "
+            f"({len(people)} unique so far)")
+
+    identities = list(people.values())
+    if limit:
+        identities = identities[:limit]
+    say(f"encoding {len(identities)} portraits")
+
+    vectors: list[np.ndarray] = []
+    kept: list[Identity] = []
+
+    def grab(ident: Identity):
+        return ident, fetch_image(session, ident.image_url, 30.0)
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for done, (ident, blob) in enumerate(pool.map(grab, identities), 1):
+            if done % 100 == 0:
+                say(f"  {done}/{len(identities)} · {len(kept)} usable faces")
+            if not blob:
+                continue
+            img = decode_image(blob)
+            if img is None:
+                continue
+            face = largest_face(encoder.detect_and_encode(img))
+            if face is None:
+                continue
+            vectors.append(face.embedding.astype(np.float32))
+            kept.append(ident)
+
+    if not vectors:
+        raise RuntimeError("no faces could be encoded - is the network reachable?")
+
+    MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(INDEX_VECTORS, vectors=np.vstack(vectors))
+    INDEX_META.write_text(json.dumps({
+        "backend": encoder.name,
+        "model": encoder.model,
+        "count": len(kept),
+        "langs": list(langs),
+        "months": months,
+        "identities": [i.to_dict() for i in kept],
+    }, ensure_ascii=False, indent=1))
+    say(f"index written: {len(kept)} faces ({encoder.name})")
+    return len(kept)
+
+
+# ------------------------------------------------------------------ query side
+
+
+class IdentityIndex:
+    def __init__(self, vectors: np.ndarray, identities: list[Identity], backend: str) -> None:
+        self.vectors = vectors
+        self.identities = identities
+        self.backend = backend
+
+    @classmethod
+    def load(cls, encoder=None) -> IdentityIndex:
+        if not (INDEX_VECTORS.exists() and INDEX_META.exists()):
+            raise FileNotFoundError(
+                "no identity index yet - build one with: sigil index build"
+            )
+        meta = json.loads(INDEX_META.read_text())
+        if encoder is not None and meta["backend"] != encoder.name:
+            # Embeddings from different models are not comparable at all; a
+            # silent mismatch would return confident nonsense.
+            raise RuntimeError(
+                f"identity index was built with '{meta['backend']}' but the active "
+                f"backend is '{encoder.name}' - rebuild it with: sigil index build"
+            )
+        vectors = np.load(INDEX_VECTORS)["vectors"]
+        identities = [Identity(**d) for d in meta["identities"]]
+        return cls(vectors, identities, meta["backend"])
+
+    def __len__(self) -> int:
+        return len(self.identities)
+
+    def query(self, embedding: np.ndarray, top: int = 5) -> list[IdentityHit]:
+        """Rank every indexed face against the probe. One matrix multiply."""
+        v = np.asarray(embedding, dtype=np.float32).ravel()
+        v = v / (np.linalg.norm(v) or 1.0)
+        sims = self.vectors @ v
+        order = np.argsort(-sims)[:top]
+        return [IdentityHit(self.identities[i], float(sims[i])) for i in order]
+
+
+def identify(encoder, face, top: int = 5) -> list[IdentityHit]:
+    return IdentityIndex.load(encoder).query(face.embedding, top=top)

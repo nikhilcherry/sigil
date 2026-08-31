@@ -60,10 +60,11 @@ def test_unknown_route_is_a_json_404(app):
     assert post(app + "/api/nope")[0] == 404
 
 
-def test_run_requires_a_query(app):
+def test_run_accepts_an_empty_query(app):
+    """An empty query is not an error - it asks the pipeline to identify the face."""
     status, body = post(app + "/api/run", {"image_b64": "aGk=", "query": "  "})
-    assert status == 400
-    assert "query" in body["error"]
+    assert status == 200
+    assert "job" in body
 
 
 def test_run_requires_an_image(app):

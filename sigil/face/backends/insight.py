@@ -12,6 +12,21 @@ import numpy as np
 from ..encoder import Face
 
 
+def _quiet_onnxruntime() -> None:
+    """Turn down onnxruntime's own logger.
+
+    Its provider banner is written from C++ straight to fd 2, so neither
+    redirect_stderr nor a StringIO swap can catch it - the library's own
+    severity setting is the only real lever. 3 = warnings and above.
+    """
+    try:
+        import onnxruntime
+
+        onnxruntime.set_default_logger_severity(3)
+    except Exception:  # noqa: BLE001 - purely cosmetic
+        pass
+
+
 @contextlib.contextmanager
 def _quiet():
     """Muffle insightface's model-loading chatter.
@@ -21,8 +36,10 @@ def _quiet():
     so it is swallowed rather than surfaced.
     """
     warnings.filterwarnings("ignore", category=FutureWarning)
-    buf = io.StringIO()
-    with contextlib.redirect_stdout(buf):
+    # onnxruntime writes its provider banner to stderr, insightface writes its
+    # model banners to stdout, so both need covering. Scoped tightly to model
+    # load and inference calls so it cannot swallow a real error elsewhere.
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         yield
 
 
@@ -39,6 +56,7 @@ class InsightFaceBackend:
 
         # genderage and landmark models are dead weight here; we only need
         # detection + recognition, and skipping them roughly halves load time.
+        _quiet_onnxruntime()
         with _quiet():
             self.app = FaceAnalysis(
                 name="buffalo_l",

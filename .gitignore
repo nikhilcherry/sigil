@@ -16,5 +16,9 @@ artifacts/
 # ONNX weights are fetched by scripts/fetch_models.sh; too large for git.
 models/*.onnx
 
+# The identity index is derived data - rebuild it with `sigil index build`
+# rather than committing tens of MB of embeddings.
+models/identity-index.*
+
 # Secrets.
 .env
