@@ -1,0 +1,60 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install
+        # The opencv backend only. insightface pulls a ~300 MB model pack at
+        # runtime, which is not worth a CI minute on every push - the offline
+        # suite skips any backend that will not load.
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Cache face models
+        uses: actions/cache@v4
+        with:
+          path: models/*.onnx
+          key: opencv-zoo-yunet-sface-v1
+
+      - name: Fetch face models
+        run: ./scripts/fetch_models.sh
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Test
+        run: pytest -m "not network" -q --cov=sigil --cov-report=term-missing
+
+  live:
+    # Third-party APIs are the realistic breakage here, so they are checked on a
+    # schedule and on demand rather than blocking every pull request.
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e ".[dev]" && ./scripts/fetch_models.sh
+      - run: pytest -m network -q

@@ -1,0 +1,12 @@
+# Core runtime. For the accurate face backend also install: insightface scikit-image
+web3>=7.0
+eth-tester[py-evm]>=0.12
+py-solc-x>=2.0
+opencv-python-headless>=4.9
+numpy>=1.26
+requests>=2.31
+rich>=13.7
+click>=8.1
+python-dotenv>=1.0
+onnxruntime>=1.17
+Pillow>=10
