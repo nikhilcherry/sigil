@@ -157,7 +157,15 @@ class ChainClient:
         tx["gas"] = int(self.w3.eth.estimate_gas(tx) * 1.25)
         signed = self.w3.eth.account.sign_transaction(tx, self.cfg.private_key)
         raw = getattr(signed, "raw_transaction", None) or signed.rawTransaction
-        tx_hash = self.w3.eth.send_raw_transaction(raw)
+        try:
+            tx_hash = self.w3.eth.send_raw_transaction(raw)
+        except Exception as exc:  # noqa: BLE001
+            if "insufficient funds" in str(exc).lower():
+                raise RuntimeError(
+                    f"{self.address} has no funds on chain {self.chain_id}. "
+                    "Fund it from a testnet faucet, or use SIGIL_CHAIN=local."
+                ) from exc
+            raise
         return dict(self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=300))
 
     def anchor(self, evidence: Evidence) -> dict[str, Any]:

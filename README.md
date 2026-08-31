@@ -1,5 +1,9 @@
 # sigil
 
+[![ci](https://github.com/nikhilcherry/sigil/actions/workflows/ci.yml/badge.svg)](https://github.com/nikhilcherry/sigil/actions/workflows/ci.yml)
+[![python](https://img.shields.io/badge/python-3.10%2B-blue)](pyproject.toml)
+[![licence](https://img.shields.io/badge/licence-MIT-green)](LICENSE)
+
 **Face scan → live social search → tamper-evident on-chain record.**
 
 Give `sigil` a photograph of a face. It encodes the face, performs a real search
@@ -77,8 +81,11 @@ example images:
 
 | pair | insightface | opencv |
 |---|---|---|
-| probe vs. the same person's live Bluesky avatar | **0.67 – 0.76** | — |
+| probe vs. the same person's live Bluesky avatar | **0.67 – 0.76** | **0.74** |
 | probe vs. a different person (`control-buttigieg.jpg`) | **−0.02** | below threshold |
+
+Both backends find the same live match on a clean clone, so the fallback is a
+real alternative rather than a degraded mode.
 
 That gap is what makes a fixed threshold defensible, and `tests/test_face.py`
 asserts it on every run so a model or preprocessing change cannot quietly erode
@@ -153,7 +160,7 @@ snapshotted after every write and rehydrated on load, so a record written by
 ```bash
 cp .env.example .env      # then set:
 #   SIGIL_CHAIN=rpc
-#   SIGIL_RPC_URL=https://rpc-amoy.polygon.technology
+#   SIGIL_RPC_URL=https://polygon-amoy-bor-rpc.publicnode.com
 #   SIGIL_PRIVATE_KEY=0x…        throwaway key, testnet funds only
 sigil chain info                 # deploys the registry, prints the address
 sigil run examples/probe-aoc.jpg -q "AOC"
@@ -162,6 +169,15 @@ sigil run examples/probe-aoc.jpg -q "AOC"
 Set `SIGIL_CONTRACT` to the printed address afterwards to reuse the deployment.
 Anchoring costs ~114k gas. The run prints a block-explorer link for the
 transaction.
+
+Two notes from actually testing this. First, `rpc-amoy.polygon.technology` — the
+endpoint most guides cite — was unreachable during development;
+`polygon-amoy-bor-rpc.publicnode.com` and `polygon-amoy.drpc.org` both work
+(chain id 80002). Second, the RPC path here has been exercised end to end
+against a live Amoy node up to the point of funding: it connects, builds and
+prices the deployment transaction, and stops at `insufficient funds` with an
+unfunded key. Fund a throwaway address from an Amoy faucet and it deploys for
+real — that is the only step that needs a human.
 
 ---
 
