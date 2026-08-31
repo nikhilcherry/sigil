@@ -36,6 +36,13 @@ python3 -m venv .venv && .venv/bin/pip install -e ".[insight,dev]"
 That is the whole demo. No API keys, no wallet, no testnet funds, no Node.js.
 The first run downloads the ArcFace model pack (~300 MB) and a `solc` binary.
 
+Prefer to watch it happen? `sigil serve` opens a local web UI at
+<http://127.0.0.1:8099> — drop a face, type a query, and the pipeline streams
+live: candidates appear as thumbnails the moment they are downloaded and
+encoded, sorted by similarity, with the ones clearing the threshold lit up. Same
+pipeline, same code path; the CLI and the UI are two front ends over one
+`run_pipeline`.
+
 Prefer no heavy model download? `pip install -e ".[dev]"`, run
 `./scripts/fetch_models.sh` (37 MB), and everything works on the OpenCV backend.
 
@@ -217,6 +224,24 @@ Verification: NOT VERIFIED   (exit 1)
 One character changes the hash, and the altered bundle has no chain record.
 `./scripts/demo.sh` runs this whole sequence end to end for a screen recording.
 
+The web UI has the same two buttons. Tampering there marks every differing
+nibble of the digest in red, which makes the avalanche visible: edit one
+character of a post's text and essentially the whole hash changes.
+
+### The web UI
+
+```bash
+sigil serve            # http://127.0.0.1:8099
+```
+
+One HTML file served by `http.server`, with pipeline events pushed over
+Server-Sent Events. No framework, no build step, no CDN, no fonts fetched at
+runtime — it works with the network cable pulled, apart from the search itself.
+
+It binds to `127.0.0.1` and has no authentication, deliberately. This tool
+searches for people by face; it has no business being reachable from off-box.
+`--host` exists but you should have a good reason to use it.
+
 ---
 
 ## Commands
@@ -229,6 +254,7 @@ One character changes the hash, and the altered bundle has no chain record.
 | `sigil anchor` | 4 | anchor an existing bundle |
 | `sigil verify` | 5 | re-verify against chain state |
 | `sigil tamper` | — | produce an altered bundle to prove verification fails |
+| `sigil serve` | 1–5 | local web UI, streaming the run live |
 | `sigil chain info` / `reset` | — | inspect or wipe the chain backend |
 | `sigil backends` | — | report which face backends this machine can load |
 
@@ -246,7 +272,7 @@ verifying against new probes — pick one and keep it).
 ## Tests
 
 ```bash
-pytest -m "not network"   # 47 offline tests
+pytest -m "not network"   # 55 offline tests
 pytest -m network         # 3 tests against the live API and a live chain
 ```
 

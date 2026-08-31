@@ -3,6 +3,9 @@
 #
 # Every step below hits the live network and a live chain; nothing is stubbed.
 # Pass a probe image and a query, or take the defaults.
+#
+# For a visual recording instead, run `sigil serve` and drive the same pipeline
+# from the browser at http://127.0.0.1:8099.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

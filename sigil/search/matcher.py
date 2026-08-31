@@ -84,7 +84,7 @@ def search_and_match(
     query: str,
     threshold: float,
     cfg: Config,
-    on_progress: Callable[[int, int, float], None] | None = None,
+    on_event: Callable[[dict[str, Any]], None] | None = None,
 ) -> MatchResult:
     session = make_session()
     result = MatchResult(best=None)
@@ -122,9 +122,24 @@ def search_and_match(
                         matched_bbox=bbox,
                     )
                 )
-                if on_progress:
-                    top = max((s.similarity for s in scored), default=0.0)
-                    on_progress(result.images_examined, len(scored), top)
+                if on_event:
+                    on_event({
+                        "type": "candidate",
+                        "similarity": round(sim, 4),
+                        "handle": cand.author_handle,
+                        "display": cand.author_display_name,
+                        "image_url": cand.image_url,
+                        "post_url": cand.post_url,
+                        "via": cand.discovered_via,
+                        "faces": n_faces,
+                        "hit": sim >= threshold,
+                    })
+                    on_event({
+                        "type": "progress",
+                        "examined": result.images_examined,
+                        "scored": len(scored),
+                        "top": round(max((s.similarity for s in scored), default=0.0), 4),
+                    })
 
     scored.sort(key=lambda s: s.similarity, reverse=True)
     result.ranked = scored[:20]

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -86,16 +86,40 @@ def run_pipeline(
     query: str,
     cfg: Config,
     do_anchor: bool = True,
-    on_progress: Callable[[int, int, float], None] | None = None,
+    on_event: Callable[[dict[str, Any]], None] | None = None,
 ) -> PipelineResult:
+    emit = on_event or (lambda _: None)
+
+    emit({"type": "stage", "stage": "scan", "status": "start"})
     image_bytes, probe_url = load_probe_bytes(source, cfg)
     face, probe_ref, encoder = scan_probe(image_bytes, cfg)
     threshold = cfg.threshold_for(encoder.name)
+    emit({
+        "type": "probe",
+        "backend": probe_ref.backend,
+        "model": probe_ref.model,
+        "bbox": probe_ref.bbox,
+        "det_score": probe_ref.det_score,
+        "image_sha256": probe_ref.image_sha256,
+        "embedding_sha256": probe_ref.embedding_sha256,
+        "threshold": threshold,
+        "crop": face_crop_data_uri(image_bytes, probe_ref.bbox),
+    })
+    emit({"type": "stage", "stage": "scan", "status": "done"})
 
+    emit({"type": "stage", "stage": "search", "status": "start"})
     providers = build_providers(cfg, probe_url)
+    emit({"type": "providers", "providers": [p.name for p in providers]})
     match = search_and_match(
-        encoder, face, providers, query, threshold, cfg, on_progress=on_progress
+        encoder, face, providers, query, threshold, cfg, on_event=on_event
     )
+    emit({
+        "type": "stage", "stage": "search", "status": "done",
+        "examined": match.images_examined,
+        "with_faces": match.images_with_faces,
+        "faces": match.faces_examined,
+        "calls": sum(len(t["calls"]) for t in match.trace),
+    })
 
     result = PipelineResult(
         probe_face=face,
@@ -104,6 +128,13 @@ def run_pipeline(
         providers_used=[p.name for p in providers],
     )
     if not match.found:
+        emit({
+            "type": "nomatch",
+            "best": round(match.ranked[0].similarity, 4) if match.ranked else 0.0,
+            "examined": match.images_examined,
+            "threshold": threshold,
+        })
+        emit({"type": "done", "found": False})
         return result
 
     best = match.best
@@ -129,11 +160,81 @@ def run_pipeline(
         search_trace=match.trace,
     )
 
-    if do_anchor:
-        client = ChainClient(cfg)
-        result.anchor = client.anchor(result.evidence)
-        result.verification = client.verify(
-            result.evidence, probe_embedding_sha256=probe_ref.embedding_sha256
-        )
+    emit({
+        "type": "match",
+        "similarity": round(best.similarity, 4),
+        "threshold": threshold,
+        "hash": result.evidence.evidence_hash_hex(),
+        "match": asdict(result.evidence.match),
+    })
+
+    if not do_anchor:
+        emit({"type": "done", "found": True})
+        return result
+
+    emit({"type": "stage", "stage": "anchor", "status": "start"})
+    client = ChainClient(cfg)
+    result.anchor = client.anchor(result.evidence)
+    emit({"type": "anchor", **_jsonable(result.anchor)})
+    emit({"type": "stage", "stage": "anchor", "status": "done"})
+
+    emit({"type": "stage", "stage": "verify", "status": "start"})
+    result.verification = client.verify(
+        result.evidence, probe_embedding_sha256=probe_ref.embedding_sha256
+    )
+    emit({"type": "verification", **verification_payload(result.verification)})
+    emit({"type": "stage", "stage": "verify", "status": "done"})
+    emit({"type": "done", "found": True})
 
     return result
+
+
+def _jsonable(d: dict[str, Any]) -> dict[str, Any]:
+    """Receipts carry HexBytes and AttributeDicts; flatten them for transport."""
+    out: dict[str, Any] = {}
+    for k, v in d.items():
+        if isinstance(v, (bytes, bytearray)):
+            out[k] = "0x" + v.hex()
+        elif isinstance(v, (str, int, float, bool)) or v is None:
+            out[k] = v
+        else:
+            out[k] = str(v)
+    return out
+
+
+def verification_payload(v) -> dict[str, Any]:
+    return {
+        "evidence_hash": v.evidence_hash,
+        "anchored": v.anchored,
+        "similarity_matches": v.similarity_matches,
+        "subject_matches": v.subject_matches,
+        "probe_matches": v.probe_matches,
+        "source_image_intact": v.source_image_intact,
+        "on_chain": v.on_chain,
+        "notes": v.notes,
+        "ok": v.ok,
+    }
+
+
+def face_crop_data_uri(image_bytes: bytes, bbox: list[int], size: int = 168) -> str | None:
+    """A small JPEG of just the detected face, for the UI to show what it locked onto."""
+    import base64
+
+    import cv2
+
+    img = decode_image(image_bytes)
+    if img is None:
+        return None
+    h, w = img.shape[:2]
+    x1, y1, x2, y2 = bbox
+    pad = int(0.18 * max(x2 - x1, y2 - y1))
+    x1, y1 = max(0, x1 - pad), max(0, y1 - pad)
+    x2, y2 = min(w, x2 + pad), min(h, y2 + pad)
+    crop = img[y1:y2, x1:x2]
+    if crop.size == 0:
+        return None
+    crop = cv2.resize(crop, (size, size), interpolation=cv2.INTER_AREA)
+    ok, buf = cv2.imencode(".jpg", crop, [cv2.IMWRITE_JPEG_QUALITY, 82])
+    if not ok:
+        return None
+    return "data:image/jpeg;base64," + base64.b64encode(buf.tobytes()).decode()

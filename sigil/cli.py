@@ -82,14 +82,18 @@ def run(image, query, backend, threshold, max_images, chain_backend, no_anchor, 
                   console=console, transient=True) as progress:
         task = progress.add_task("searching", total=cfg.max_images, note="")
 
-        def on_progress(examined: int, scored: int, top: float) -> None:
-            progress.update(task, completed=examined,
-                            note=f"{scored} faces scored · best {top:.3f}")
+        def on_event(event: dict) -> None:
+            if event.get("type") == "progress":
+                progress.update(
+                    task,
+                    completed=event["examined"],
+                    note=f"{event['scored']} faces scored · best {event['top']:.3f}",
+                )
 
         report.stage(1, total, "Face scan")
         try:
             result = run_pipeline(image, query, cfg, do_anchor=not no_anchor,
-                                  on_progress=on_progress)
+                                  on_event=on_event)
         except PipelineError as exc:
             progress.stop()
             raise click.ClickException(str(exc)) from exc
@@ -278,6 +282,18 @@ def chain_reset():
         console.print(f"[yellow]removed {STATE_PATH}[/yellow]")
     else:
         console.print("[dim]no local chain state to remove[/dim]")
+
+
+@cli.command()
+@click.option("--port", default=8099, show_default=True)
+@click.option("--host", default="127.0.0.1", show_default=True,
+              help="Bind address. Localhost by default, and it should stay that way.")
+@click.option("--no-browser", is_flag=True, help="Do not open a browser window.")
+def serve(port, host, no_browser):
+    """Launch the local web UI and watch the pipeline run live."""
+    from .web import serve as run_server
+
+    run_server(host=host, port=port, open_browser=not no_browser)
 
 
 @cli.command()

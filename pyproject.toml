@@ -41,6 +41,9 @@ Repository = "https://github.com/nikhilcherry/sigil"
 [tool.setuptools.packages.find]
 include = ["sigil*"]
 
+[tool.setuptools.package-data]
+sigil = ["web/*.html"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = ["network: hits live third-party APIs; deselect with -m 'not network'"]

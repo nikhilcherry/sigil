@@ -1,0 +1,618 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>sigil — evidence bench</title>
+<style>
+:root{
+  --ground:#08090a; --panel:#0e1012; --panel-2:#121517;
+  --rule:rgba(255,255,255,.075); --rule-hot:rgba(255,178,36,.32);
+  --ink:#e8e6e1; --dim:#767d80; --faint:#4a5154;
+  --amber:#ffb224; --amber-dim:#8a5f14;
+  --pass:#5eff9f; --fail:#ff5252; --wait:#3f4650;
+  --mono:ui-monospace,"JetBrains Mono","IBM Plex Mono","Cascadia Code","SF Mono",Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  background:var(--ground); color:var(--ink); font-family:var(--mono);
+  font-size:13px; line-height:1.5; letter-spacing:.01em;
+  font-variant-numeric:tabular-nums;
+  background-image:
+    linear-gradient(var(--rule) 1px,transparent 1px),
+    linear-gradient(90deg,var(--rule) 1px,transparent 1px);
+  background-size:64px 64px,64px 64px;
+  background-position:-1px -1px;
+}
+body::after{
+  content:""; position:fixed; inset:0; pointer-events:none; z-index:9;
+  opacity:.16; mix-blend-mode:overlay;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+a{color:var(--amber);text-decoration:none;border-bottom:1px solid var(--amber-dim)}
+a:hover{background:rgba(255,178,36,.1)}
+
+/* ---------- shell ---------- */
+.wrap{max-width:1340px;margin:0 auto;padding:0 22px 80px}
+header{
+  display:flex;align-items:baseline;gap:18px;flex-wrap:wrap;
+  padding:26px 0 14px;border-bottom:1px solid var(--rule);margin-bottom:22px;
+}
+.brand{font-size:22px;font-weight:700;letter-spacing:.34em;text-transform:uppercase}
+.brand span{color:var(--amber)}
+.tag{color:var(--dim);font-size:11.5px;letter-spacing:.06em}
+.chainchip{
+  margin-left:auto;display:flex;gap:14px;align-items:center;
+  font-size:11px;color:var(--dim);border:1px solid var(--rule);
+  padding:5px 11px;background:var(--panel);
+}
+.chainchip b{color:var(--ink);font-weight:500}
+.dot{width:6px;height:6px;background:var(--wait);display:inline-block}
+.dot.live{background:var(--pass);box-shadow:0 0 8px var(--pass)}
+
+.cols{display:grid;grid-template-columns:352px minmax(0,1fr);gap:22px;align-items:start}
+@media(max-width:940px){.cols{grid-template-columns:1fr}}
+
+.panel{background:var(--panel);border:1px solid var(--rule)}
+.panel + .panel{margin-top:16px}
+.panel h2{
+  font-size:10.5px;letter-spacing:.22em;text-transform:uppercase;color:var(--dim);
+  padding:11px 14px;border-bottom:1px solid var(--rule);font-weight:500;
+  display:flex;justify-content:space-between;align-items:center;
+}
+.body{padding:14px}
+
+/* ---------- input ---------- */
+.drop{
+  border:1px dashed rgba(255,255,255,.16);background:var(--panel-2);
+  aspect-ratio:1/.82;display:grid;place-items:center;text-align:center;
+  cursor:pointer;position:relative;overflow:hidden;transition:border-color .18s,background .18s;
+}
+.drop:hover,.drop.over{border-color:var(--amber);background:rgba(255,178,36,.05)}
+.drop p{color:var(--faint);font-size:11px;letter-spacing:.09em;line-height:1.9}
+.drop p b{color:var(--dim);display:block;font-size:12px;font-weight:500;letter-spacing:.14em}
+.drop img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.drop.has img{filter:grayscale(.35) contrast(1.06)}
+
+label.f{display:block;margin-top:14px}
+label.f i{
+  font-style:normal;display:block;font-size:10px;letter-spacing:.18em;
+  text-transform:uppercase;color:var(--dim);margin-bottom:6px;
+}
+input[type=text],select{
+  width:100%;background:var(--panel-2);border:1px solid var(--rule);color:var(--ink);
+  font:inherit;padding:9px 11px;outline:none;
+}
+input[type=text]:focus,select:focus{border-color:var(--amber)}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+
+button{
+  font:inherit;cursor:pointer;background:transparent;color:var(--ink);
+  border:1px solid var(--rule);padding:10px 14px;letter-spacing:.14em;
+  text-transform:uppercase;font-size:11px;transition:all .16s;
+}
+button:hover:not(:disabled){border-color:var(--amber);color:var(--amber)}
+button:disabled{opacity:.34;cursor:not-allowed}
+.run{
+  width:100%;margin-top:16px;background:var(--amber);color:#140d00;border-color:var(--amber);
+  font-weight:700;padding:13px;letter-spacing:.2em;
+}
+.run:hover:not(:disabled){background:#ffc450;color:#140d00}
+.run.busy{background:transparent;color:var(--amber)}
+
+/* ---------- stage ladder ---------- */
+.ladder{list-style:none;counter-reset:s}
+.ladder li{
+  display:flex;gap:12px;align-items:flex-start;padding:9px 0;
+  border-bottom:1px solid var(--rule);color:var(--faint);transition:color .2s;
+}
+.ladder li:last-child{border-bottom:0}
+.ladder .n{
+  width:20px;height:20px;flex:none;border:1px solid currentColor;
+  display:grid;place-items:center;font-size:10px;margin-top:1px;
+}
+.ladder .t{font-size:11.5px;letter-spacing:.1em;text-transform:uppercase}
+.ladder .sub{display:block;font-size:10.5px;letter-spacing:0;text-transform:none;color:var(--faint);margin-top:3px;min-height:0}
+.ladder li.act{color:var(--amber)}
+.ladder li.act .n{background:rgba(255,178,36,.14);animation:pulse 1.1s ease-in-out infinite}
+.ladder li.ok{color:var(--ink)}
+.ladder li.ok .n{border-color:var(--pass);color:var(--pass)}
+.ladder li.ok .sub{color:var(--dim)}
+.ladder li.bad{color:var(--fail)}
+.ladder li.bad .n{border-color:var(--fail)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.42}}
+
+/* ---------- readout ---------- */
+.metrics{display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid var(--rule)}
+.metrics div{padding:12px 14px;border-right:1px solid var(--rule)}
+.metrics div:last-child{border-right:0}
+.metrics b{display:block;font-size:20px;font-weight:500;color:var(--amber);letter-spacing:-.01em}
+.metrics i{font-style:normal;font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--faint)}
+
+.sheet{display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:8px;padding:14px}
+.cand{position:relative;opacity:0;animation:in .3s ease forwards}
+@keyframes in{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+.cand img{width:100%;aspect-ratio:1;object-fit:cover;border:1px solid var(--rule);filter:grayscale(1) contrast(1.1);display:block}
+.cand .s{font-size:10.5px;color:var(--faint);margin-top:4px;display:flex;justify-content:space-between;gap:4px}
+.cand .s em{font-style:normal;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--faint)}
+.cand.hit img{border-color:var(--amber);filter:none;box-shadow:0 0 0 1px var(--amber),0 0 22px rgba(255,178,36,.28)}
+.cand.hit .s{color:var(--amber)}
+
+/* ---------- match ---------- */
+.match{display:grid;grid-template-columns:132px minmax(0,1fr);gap:16px;padding:14px}
+.match .face{width:132px}
+.match .face img{width:100%;aspect-ratio:1;object-fit:cover;border:1px solid var(--amber);display:block}
+.match .face .cap{font-size:9.5px;letter-spacing:.14em;color:var(--faint);text-transform:uppercase;text-align:center;padding-top:6px}
+.kv{display:grid;grid-template-columns:minmax(88px,auto) minmax(0,1fr);gap:5px 14px;font-size:12px;align-items:baseline}
+.kv dt{color:var(--faint);font-size:10px;letter-spacing:.13em;text-transform:uppercase}
+.kv dd{overflow-wrap:anywhere;color:var(--ink)}
+.big{font-size:26px;color:var(--amber);letter-spacing:-.02em}
+.hash{font-size:11px;color:var(--amber);overflow-wrap:anywhere;letter-spacing:.02em}
+.hash .diff{background:var(--fail);color:#0b0000;padding:0 1px}
+
+/* ---------- verification ---------- */
+.checks{padding:6px 14px 14px}
+.chk{display:flex;justify-content:space-between;gap:14px;padding:8px 0;border-bottom:1px solid var(--rule);font-size:12px}
+.chk:last-child{border-bottom:0}
+.chk span{color:var(--dim)}
+.chk b{font-weight:700;letter-spacing:.12em;font-size:11px}
+.chk b.p{color:var(--pass)} .chk b.f{color:var(--fail)} .chk b.n{color:var(--faint)}
+.verdict{padding:13px 14px;font-size:13px;letter-spacing:.24em;text-align:center;font-weight:700;text-transform:uppercase}
+.verdict.p{background:rgba(94,255,159,.1);color:var(--pass);border-top:1px solid rgba(94,255,159,.3)}
+.verdict.f{background:rgba(255,82,82,.1);color:var(--fail);border-top:1px solid rgba(255,82,82,.34)}
+.note{font-size:11px;color:var(--dim);padding:10px 14px;border-top:1px solid var(--rule);line-height:1.7}
+
+.empty{padding:52px 20px;text-align:center;color:var(--faint);font-size:11.5px;letter-spacing:.1em;line-height:2.1}
+.err{margin:14px;padding:12px 14px;border:1px solid var(--fail);color:var(--fail);font-size:12px;background:rgba(255,82,82,.07)}
+.hide{display:none!important}
+.actions{display:flex;gap:10px;padding:14px;border-top:1px solid var(--rule);flex-wrap:wrap}
+.cursor{display:inline-block;width:7px;height:12px;background:var(--amber);animation:blink .9s steps(2) infinite;vertical-align:-1px}
+@keyframes blink{50%{opacity:0}}
+footer{margin-top:34px;padding-top:16px;border-top:1px solid var(--rule);color:var(--faint);font-size:10.5px;letter-spacing:.06em;line-height:2}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="brand">SIG<span>I</span>L</div>
+  <div class="tag">face scan → live social search → tamper-evident on-chain record</div>
+  <div class="chainchip">
+    <span class="dot" id="chaindot"></span>
+    <span>chain <b id="c-backend">—</b></span>
+    <span>id <b id="c-id">—</b></span>
+    <span>records <b id="c-total">—</b></span>
+  </div>
+</header>
+
+<div class="cols">
+  <!-- ============ left rail ============ -->
+  <div>
+    <div class="panel">
+      <h2>Probe</h2>
+      <div class="body">
+        <div class="drop" id="drop">
+          <img id="preview" class="hide" alt="">
+          <p><b>Drop a face</b>or click to choose<br>jpg · png · webp</p>
+        </div>
+        <input type="file" id="file" accept="image/*" class="hide">
+
+        <label class="f"><i>Search query</i>
+          <input type="text" id="query" placeholder="a name, handle or topic" value="AOC">
+        </label>
+
+        <div class="row2" style="margin-top:14px">
+          <label class="f" style="margin:0"><i>Backend</i>
+            <select id="backend">
+              <option value="auto">auto</option>
+              <option value="insightface">insightface</option>
+              <option value="opencv">opencv</option>
+            </select>
+          </label>
+          <label class="f" style="margin:0"><i>Max images</i>
+            <select id="maxi">
+              <option>40</option><option selected>80</option>
+              <option>160</option><option>300</option>
+            </select>
+          </label>
+        </div>
+
+        <button class="run" id="run" disabled>Run pipeline</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Stages</h2>
+      <div class="body" style="padding:4px 14px">
+        <ul class="ladder" id="ladder">
+          <li data-s="scan"><span class="n">1</span><span><span class="t">Face scan</span><span class="sub">detect + encode</span></span></li>
+          <li data-s="search"><span class="n">2</span><span><span class="t">Live search</span><span class="sub">AT Protocol</span></span></li>
+          <li data-s="match"><span class="n">3</span><span><span class="t">Face match</span><span class="sub">cosine vs threshold</span></span></li>
+          <li data-s="anchor"><span class="n">4</span><span><span class="t">Anchor</span><span class="sub">keccak256 → chain</span></span></li>
+          <li data-s="verify"><span class="n">5</span><span><span class="t">Re-verify</span><span class="sub">against chain state</span></span></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="panel hide" id="probepanel">
+      <h2>Encoded face</h2>
+      <div class="match" style="grid-template-columns:110px minmax(0,1fr)">
+        <div class="face" style="width:110px">
+          <img id="crop" alt="detected face">
+          <div class="cap">detected</div>
+        </div>
+        <dl class="kv">
+          <dt>backend</dt><dd id="p-backend">—</dd>
+          <dt>det score</dt><dd id="p-det">—</dd>
+          <dt>threshold</dt><dd id="p-thr">—</dd>
+          <dt>embedding</dt><dd id="p-emb" style="font-size:10.5px;color:var(--dim)">—</dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ right readout ============ -->
+  <div>
+    <div class="panel">
+      <h2>Search <span id="providers" style="letter-spacing:.06em;text-transform:none;color:var(--faint)"></span></h2>
+      <div class="metrics">
+        <div><b id="m-fetched">0</b><i>fetched</i></div>
+        <div><b id="m-faces">0</b><i>with a face</i></div>
+        <div><b id="m-top">0.000</b><i>best score</i></div>
+        <div><b id="m-calls">0</b><i>api calls</i></div>
+      </div>
+      <div id="sheet" class="sheet"></div>
+      <div id="sheet-empty" class="empty">
+        candidates appear here as they are downloaded and encoded<br>
+        <span style="color:var(--faint);opacity:.6">nothing is pre-fetched — every run hits the live network</span>
+      </div>
+    </div>
+
+    <div class="panel hide" id="matchpanel">
+      <h2>Match <span id="m-verdictchip" style="color:var(--amber);letter-spacing:.1em"></span></h2>
+      <div class="match">
+        <div class="face">
+          <img id="m-img" alt="matched image">
+          <div class="cap">discovered</div>
+        </div>
+        <dl class="kv">
+          <dt>similarity</dt><dd><span class="big" id="m-sim">—</span> <span style="color:var(--faint);font-size:11px" id="m-thr"></span></dd>
+          <dt>account</dt><dd id="m-acct">—</dd>
+          <dt>post</dt><dd id="m-post">—</dd>
+          <dt>found via</dt><dd id="m-via" style="color:var(--dim);font-size:11px">—</dd>
+          <dt>evidence</dt><dd class="hash" id="m-hash">—</dd>
+        </dl>
+      </div>
+    </div>
+
+    <div class="panel hide" id="chainpanel">
+      <h2>On-chain record</h2>
+      <div class="body">
+        <dl class="kv">
+          <dt>tx</dt><dd class="hash" id="a-tx">—</dd>
+          <dt>block</dt><dd id="a-block">—</dd>
+          <dt>gas</dt><dd id="a-gas">—</dd>
+          <dt>contract</dt><dd id="a-contract" style="font-size:11px;color:var(--dim)">—</dd>
+          <dt>subject ref</dt><dd class="hash" id="a-subject" style="color:var(--dim)">—</dd>
+        </dl>
+      </div>
+    </div>
+
+    <div class="panel hide" id="verifypanel">
+      <h2>Verification</h2>
+      <div class="checks" id="checks"></div>
+      <div class="verdict" id="verdict">—</div>
+      <div id="vnotes"></div>
+      <div class="actions">
+        <button id="reverify">Re-verify from disk</button>
+        <button id="tamper">Tamper with the bundle</button>
+      </div>
+    </div>
+
+    <div id="errbox"></div>
+  </div>
+</div>
+
+<footer>
+  Searching for a person by face without their consent is regulated in many jurisdictions —
+  a face embedding is biometric personal data under GDPR Art. 9 and India's DPDP Act.<br>
+  Nothing is anchored when nothing matches. The chain proves a bundle is unaltered; it does not prove the match is correct.
+</footer>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const fmt = n => Number(n).toFixed(4);
+let probeB64 = null, probeMime = "image/jpeg", cands = [], originalHash = null;
+
+/* ---------- chain chip ---------- */
+async function chainState(){
+  try{
+    const s = await (await fetch("/api/state")).json();
+    if(s.error) return;
+    $("c-backend").textContent = s.backend;
+    $("c-id").textContent = s.chain_id;
+    $("c-total").textContent = s.total;
+    $("chaindot").classList.add("live");
+  }catch(e){}
+}
+chainState();
+
+/* ---------- probe input ---------- */
+const drop = $("drop"), file = $("file");
+drop.onclick = () => file.click();
+drop.ondragover = e => { e.preventDefault(); drop.classList.add("over"); };
+drop.ondragleave = () => drop.classList.remove("over");
+drop.ondrop = e => {
+  e.preventDefault(); drop.classList.remove("over");
+  if(e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
+};
+file.onchange = () => file.files[0] && loadFile(file.files[0]);
+
+function loadFile(f){
+  probeMime = f.type || "image/jpeg";
+  const r = new FileReader();
+  r.onload = () => {
+    probeB64 = r.result.split(",")[1];
+    $("preview").src = r.result;
+    $("preview").classList.remove("hide");
+    drop.classList.add("has");
+    drop.querySelector("p").style.display = "none";
+    $("run").disabled = false;
+  };
+  r.readAsDataURL(f);
+}
+
+/* ---------- stage ladder ---------- */
+function stage(name, cls, sub){
+  const li = document.querySelector(`.ladder li[data-s="${name}"]`);
+  if(!li) return;
+  li.classList.remove("act","ok","bad");
+  if(cls) li.classList.add(cls);
+  if(sub) li.querySelector(".sub").textContent = sub;
+}
+function resetStages(){
+  document.querySelectorAll(".ladder li").forEach(li => li.classList.remove("act","ok","bad"));
+}
+
+/* ---------- run ---------- */
+$("run").onclick = async () => {
+  const query = $("query").value.trim();
+  if(!probeB64 || !query) return;
+
+  // reset
+  cands = []; originalHash = null;
+  $("sheet").innerHTML = ""; $("sheet-empty").classList.remove("hide");
+  ["matchpanel","chainpanel","verifypanel","probepanel"].forEach(i => $(i).classList.add("hide"));
+  $("errbox").innerHTML = "";
+  ["m-fetched","m-faces","m-calls"].forEach(i => $(i).textContent = "0");
+  $("m-top").textContent = "0.000";
+  resetStages();
+
+  const btn = $("run");
+  btn.disabled = true; btn.classList.add("busy");
+  btn.innerHTML = 'Running <span class="cursor"></span>';
+
+  let job;
+  try{
+    const r = await fetch("/api/run", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({
+        image_b64: probeB64, mime: probeMime, query,
+        face_backend: $("backend").value, max_images: $("maxi").value
+      })
+    });
+    const j = await r.json();
+    if(j.error) throw new Error(j.error);
+    job = j.job;
+  }catch(e){ fail(e.message); return; }
+
+  const es = new EventSource(`/api/stream?job=${job}`);
+  es.onmessage = ev => handle(JSON.parse(ev.data));
+  es.addEventListener("end", () => { es.close(); done(); });
+  es.onerror = () => { es.close(); done(); };
+};
+
+function done(){
+  const btn = $("run");
+  btn.disabled = false; btn.classList.remove("busy"); btn.textContent = "Run pipeline";
+  chainState();
+}
+function fail(msg){
+  $("errbox").innerHTML = `<div class="err">${msg}</div>`;
+  done();
+}
+
+/* ---------- event handling ---------- */
+function handle(e){
+  switch(e.type){
+    case "stage":
+      stage(e.stage, e.status === "start" ? "act" : "ok");
+      if(e.stage === "search" && e.status === "done"){
+        $("m-calls").textContent = e.calls;
+        stage("search","ok",`${e.examined} images · ${e.calls} api calls`);
+        stage("match","act");
+      }
+      break;
+
+    case "probe":
+      $("probepanel").classList.remove("hide");
+      if(e.crop) $("crop").src = e.crop;
+      $("p-backend").textContent = e.backend;
+      $("p-det").textContent = fmt(e.det_score);
+      $("p-thr").textContent = e.threshold.toFixed(3) + " cosine";
+      $("p-emb").textContent = e.embedding_sha256.slice(0,32) + "…";
+      stage("scan","ok",e.backend);
+      break;
+
+    case "providers":
+      $("providers").textContent = "· " + e.providers.join(", ");
+      break;
+
+    case "candidate":
+      addCandidate(e);
+      break;
+
+    case "progress":
+      $("m-fetched").textContent = e.examined;
+      break;
+
+    case "match":       showMatch(e); break;
+    case "nomatch":     showNoMatch(e); break;
+    case "anchor":      showAnchor(e); break;
+    case "verification":showVerification(e); break;
+    case "error":       fail(e.message); stageFailAll(); break;
+  }
+}
+function stageFailAll(){
+  document.querySelectorAll(".ladder li.act").forEach(li => {
+    li.classList.remove("act"); li.classList.add("bad");
+  });
+}
+
+/* ---------- candidate contact sheet ---------- */
+function addCandidate(c){
+  cands.push(c);
+  cands.sort((a,b) => b.similarity - a.similarity);
+  $("sheet-empty").classList.add("hide");
+  $("m-faces").textContent = cands.length;
+  // Derive the headline score from this list rather than from the server's
+  // running max. They agree, but they arrive as two separate SSE events, and a
+  // paint landing between them would show a number that contradicts the grid
+  // directly beneath it.
+  $("m-top").textContent = cands[0].similarity.toFixed(3);
+
+  // Re-render the top slice only; a long run can score hundreds of images and
+  // rebuilding all of them on every event makes the page crawl.
+  const top = cands.slice(0, 36);
+  $("sheet").innerHTML = top.map(x => `
+    <div class="cand ${x.hit ? "hit" : ""}">
+      <img src="${x.image_url}" loading="lazy" alt="">
+      <div class="s"><span>${x.similarity.toFixed(3)}</span><em>@${x.handle || "web"}</em></div>
+    </div>`).join("");
+}
+
+/* ---------- results ---------- */
+function typeHash(el, hash){
+  // A hash that stops halfway through still *looks* like a hash, which in a
+  // tool whose whole claim is integrity is worse than no animation at all.
+  // requestAnimationFrame is throttled in background tabs and simply stops, so
+  // the animation is best-effort and a hard timer guarantees the final value.
+  clearInterval(el._typer); clearTimeout(el._settle);
+  el.title = hash;
+  el.textContent = "";
+  let i = 0;
+  el._typer = setInterval(() => {
+    i += 3;
+    el.textContent = hash.slice(0, i);
+    if(i >= hash.length){ clearInterval(el._typer); el.textContent = hash; }
+  }, 14);
+  el._settle = setTimeout(() => {
+    clearInterval(el._typer);
+    if(el.title === hash) el.textContent = hash;
+  }, 1500);
+}
+
+function showMatch(e){
+  originalHash = e.hash;
+  stage("match","ok",`${e.similarity.toFixed(4)} ≥ ${e.threshold.toFixed(3)}`);
+  $("matchpanel").classList.remove("hide");
+  $("m-verdictchip").textContent = "· above threshold";
+  $("m-img").src = e.match.image_url;
+  $("m-sim").textContent = e.similarity.toFixed(4);
+  $("m-thr").textContent = `threshold ${e.threshold.toFixed(3)}`;
+  $("m-acct").innerHTML = `${e.match.author_display_name || ""} <span style="color:var(--amber)">@${e.match.author_handle}</span>`;
+  $("m-post").innerHTML = `<a href="${e.match.post_url}" target="_blank" rel="noopener">${e.match.post_url}</a>`;
+  $("m-via").textContent = e.match.discovered_via;
+  typeHash($("m-hash"), e.hash);
+}
+
+function showNoMatch(e){
+  stage("match","bad",`best ${e.best.toFixed(4)} < ${e.threshold.toFixed(3)}`);
+  $("errbox").innerHTML = `<div class="err" style="border-color:var(--amber);color:var(--amber);background:rgba(255,178,36,.06)">
+    No candidate cleared the ${e.threshold.toFixed(3)} threshold — best was ${e.best.toFixed(4)} across ${e.examined} images.<br>
+    <span style="color:var(--dim)">Nothing was anchored. That is the correct outcome, not a failure: try a broader query, more images, or a probe of someone with a public presence on the platform.</span>
+  </div>`;
+}
+
+function showAnchor(e){
+  $("chainpanel").classList.remove("hide");
+  if(e.already_anchored){
+    $("a-tx").textContent = "already anchored — the contract rejects duplicates";
+    $("a-block").textContent = "—"; $("a-gas").textContent = "—";
+  }else{
+    typeHash($("a-tx"), e.tx_hash || "");
+    $("a-block").textContent = e.block_number;
+    $("a-gas").textContent = Number(e.gas_used).toLocaleString();
+  }
+  $("a-contract").textContent = e.contract || "—";
+  $("a-subject").textContent = e.subject_ref || "—";
+  if(e.explorer){
+    $("a-tx").innerHTML = `<a href="${e.explorer}" target="_blank" rel="noopener">${e.tx_hash}</a>`;
+  }
+}
+
+const CHECKS = [
+  ["anchored","record exists on chain"],
+  ["similarity_matches","similarity unaltered"],
+  ["subject_matches","subject commitment"],
+  ["probe_matches","probe re-encodes"],
+  ["source_image_intact","source image intact"],
+];
+
+function showVerification(v){
+  $("verifypanel").classList.remove("hide");
+  $("checks").innerHTML = CHECKS.map(([k,label]) => {
+    const val = v[k];
+    const cls = val === true ? "p" : val === false ? "f" : "n";
+    const txt = val === true ? "PASS" : val === false ? "FAIL" : "NOT RUN";
+    return `<div class="chk"><span>${label}</span><b class="${cls}">${txt}</b></div>`;
+  }).join("");
+  $("verdict").className = "verdict " + (v.ok ? "p" : "f");
+  $("verdict").textContent = v.ok ? "Verified" : "Not verified";
+  $("vnotes").innerHTML = (v.notes || []).length
+    ? `<div class="note">${v.notes.join("<br>")}</div>` : "";
+  stage("verify", v.ok ? "ok" : "bad", v.ok ? "hash matches chain" : "mismatch");
+}
+
+/* ---------- re-verify & tamper ---------- */
+$("reverify").onclick = async () => {
+  const btn = $("reverify"); btn.disabled = true;
+  try{
+    const v = await (await fetch("/api/verify",{method:"POST"})).json();
+    if(v.error) throw new Error(v.error);
+    if(originalHash) $("m-hash").textContent = originalHash;
+    showVerification(v);
+  }catch(e){ fail(e.message); }
+  btn.disabled = false;
+};
+
+$("tamper").onclick = async () => {
+  const btn = $("tamper"); btn.disabled = true;
+  try{
+    const r = await (await fetch("/api/tamper",{
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({field:"match.text"})
+    })).json();
+    if(r.error) throw new Error(r.error);
+
+    // Show the two hashes with every differing nibble marked, so the point
+    // lands visually: one edited character rerolls the whole digest.
+    const a = r.original_hash, b = r.tampered_hash;
+    const marked = [...b].map((ch,i) => ch === a[i] ? ch : `<span class="diff">${ch}</span>`).join("");
+    $("m-hash").innerHTML = marked;
+
+    $("errbox").innerHTML = `<div class="err">
+      <b>Tampered:</b> <code>${r.field}</code> changed to “…${r.after}”<br><br>
+      <span style="color:var(--dim)">anchored</span> ${a}<br>
+      <span style="color:var(--dim)">tampered</span> ${b}<br><br>
+      One character changed, and the bundle no longer has a record on chain.
+    </div>`;
+    showVerification(r.verification);
+  }catch(e){ fail(e.message); }
+  btn.disabled = false;
+};
+</script>
+</body>
+</html>
