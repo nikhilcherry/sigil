@@ -331,7 +331,7 @@ verifying against new probes — pick one and keep it).
 ## Tests
 
 ```bash
-pytest -m "not network"   # 55 offline tests
+pytest -m "not network"   # 145 offline tests, 87% line coverage
 pytest -m network         # 3 tests against the live API and a live chain
 ```
 
@@ -339,6 +339,11 @@ The network tests are deliberate. The realistic failure mode of this project is
 not a logic bug — it is Bluesky changing a response shape or an auth
 requirement. A green offline suite over a broken search is exactly what needs
 catching.
+
+The offline suite covers the whole pipeline without a network: the end-to-end
+run from face to anchored record and back out of chain state, the guards that
+refuse a hostile candidate download, both optional search arms, every panel the
+demo prints, and the command sequence `scripts/demo.sh` itself runs.
 
 ---
 
