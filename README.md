@@ -242,8 +242,10 @@ on an unfunded key that fails — leaving no way to find out which address to
 fund without first trying to spend from it.
 
 Set `SIGIL_CONTRACT` to the printed address afterwards to reuse the deployment.
-Anchoring costs ~114k gas. The run prints a block-explorer link for the
-transaction.
+Anchoring costs **114,222 gas for the first record and 97,122 for every one
+after** — the difference is the registry's array-length slot going from cold to
+warm, not anything about the evidence. The run prints a block-explorer link for
+the transaction.
 
 Two notes from actually testing this. First, `rpc-amoy.polygon.technology` — the
 endpoint most guides cite — was unreachable during development;
