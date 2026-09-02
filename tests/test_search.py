@@ -599,3 +599,34 @@ def test_reused_verdicts_are_not_counted_as_faces_compared(monkeypatch):
     assert result.inference_reused == 3
     assert result.faces_examined == 2, "counted faces it never compared"
     assert result.images_with_faces == 4
+
+
+def test_progress_counts_every_image_not_only_the_ones_with_faces(monkeypatch):
+    """The live counter and the final report must agree.
+
+    Emitting progress only for scored candidates left the UI showing a smaller
+    "fetched" number than the summary printed at the end of the same run -
+    two numbers contradicting each other on one screen.
+    """
+    import sigil.search.matcher as m
+
+    # Only the middle image has a detectable face.
+    faces = {"https://b": (0.9, 1, [0, 0, 5, 5])}
+    monkeypatch.setattr(m, "fetch_image", lambda s, u, t: u.encode())
+    monkeypatch.setattr(m, "score_image",
+                        lambda e, p, blob: faces.get(blob.decode(), (-1.0, 0, [])))
+
+    events = []
+    provider = FakeProvider([_candidate(u) for u in
+                             ("https://a", "https://b", "https://c")])
+    result = search_and_match(
+        FakeEncoder({}), _face([1, 0, 0]), [provider], "q", 0.38, Config(),
+        on_event=events.append,
+    )
+
+    progress = [e for e in events if e["type"] == "progress"]
+    assert [p["examined"] for p in progress] == [1, 2, 3]
+    assert progress[-1]["examined"] == result.images_examined
+    # Only the one real face becomes a candidate event.
+    assert len([e for e in events if e["type"] == "candidate"]) == 1
+    assert progress[-1]["scored"] == 1

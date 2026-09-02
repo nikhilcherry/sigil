@@ -131,29 +131,33 @@ def search_and_match(
                 result.faces_examined += n_faces
             if n_faces:
                 result.images_with_faces += 1
-            if sim < 0:
-                continue
-            scored.append(
-                ScoredCandidate(
-                    candidate=cand,
-                    similarity=sim,
-                    image_sha256=digest,
-                    faces_in_image=n_faces,
-                    matched_bbox=bbox,
+            if sim >= 0:
+                scored.append(
+                    ScoredCandidate(
+                        candidate=cand,
+                        similarity=sim,
+                        image_sha256=digest,
+                        faces_in_image=n_faces,
+                        matched_bbox=bbox,
+                    )
                 )
-            )
+                if on_event:
+                    on_event({
+                        "type": "candidate",
+                        "similarity": round(sim, 4),
+                        "handle": cand.author_handle,
+                        "display": cand.author_display_name,
+                        "image_url": cand.image_url,
+                        "post_url": cand.post_url,
+                        "via": cand.discovered_via,
+                        "faces": n_faces,
+                        "hit": sim >= threshold,
+                    })
+            # Progress covers every image examined, including the ones with no
+            # detectable face. Emitting it only for scored candidates left the
+            # live counter reading lower than the count the final report gives,
+            # so the UI contradicted itself on screen at the end of a run.
             if on_event:
-                on_event({
-                    "type": "candidate",
-                    "similarity": round(sim, 4),
-                    "handle": cand.author_handle,
-                    "display": cand.author_display_name,
-                    "image_url": cand.image_url,
-                    "post_url": cand.post_url,
-                    "via": cand.discovered_via,
-                    "faces": n_faces,
-                    "hit": sim >= threshold,
-                })
                 on_event({
                     "type": "progress",
                     "examined": result.images_examined,
