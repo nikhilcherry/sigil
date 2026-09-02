@@ -320,3 +320,43 @@ def test_serve_opens_a_browser_only_when_asked(fake_httpd, monkeypatch):
     web.serve(host="127.0.0.1", port=9125, open_browser=True)
 
     assert opened == ["http://127.0.0.1:9125"]
+
+
+@pytest.mark.parametrize("mime", ["../../etc/passwd", "x/../../y", "",
+                                  "image/jpeg\x00.sh", "text/html", "image/png"])
+def test_a_hostile_mime_cannot_steer_where_the_probe_is_written(app, tmp_path,
+                                                                monkeypatch, mime):
+    """The probe filename is derived from a client-supplied MIME type, so it has
+    to stay inside the artifacts directory whatever the client claims.
+
+    The pipeline is stubbed out: what is under test is the path derivation in
+    _start_run, and running a real search six times to check a filename would
+    be minutes of network and inference for nothing.
+    """
+    import base64
+
+    from tests.conftest import EXAMPLE_PROBE
+
+    probes = tmp_path / "probes"
+    probes.mkdir()
+    monkeypatch.setattr(web, "ARTIFACTS_DIR", probes)
+    # A no-match result: the job runs to completion and writes no bundle, so
+    # whatever lands in the directory is the probe and nothing else.
+    monkeypatch.setattr(web, "run_pipeline",
+                        lambda *a, **k: type("R", (), {"evidence": None})())
+
+    status, body = post(f"{app}/api/run", {
+        "image_b64": base64.b64encode(EXAMPLE_PROBE.read_bytes()).decode(),
+        "query": "someone",
+        "mime": mime,
+    })
+    assert status == 200, body
+
+    _read_stream(f"{app}/api/stream?job={body['job']}", limit=20)
+
+    written = [p for p in probes.rglob("*") if p.is_file()]
+    assert written, "the probe was not written at all"
+    for path in written:
+        assert path.resolve().is_relative_to(probes.resolve()), path
+        assert path.parent.resolve() == probes.resolve(), f"escaped into {path.parent}"
+        assert path.name.startswith("probe"), path.name
