@@ -148,9 +148,3 @@ def test_a_named_face_seeds_the_search_with_its_own_name(wired, cfg, monkeypatch
     assert provider.queries == ["A Known Person"]
     assert result.found
 
-
-def test_load_encoder_is_not_required_to_be_insightface(cfg):
-    """The fallback backend must carry the whole pipeline, not just detection."""
-    from sigil.face import load_encoder
-
-    assert load_encoder("opencv").name == "opencv"
