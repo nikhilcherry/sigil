@@ -37,9 +37,11 @@ INDEX_VECTORS = MODELS_DIR / "identity-index.npz"
 INDEX_META = MODELS_DIR / "identity-index.json"
 
 # The harvest is entirely network-bound - a few hundred small API calls to
-# Wikimedia. Run in series it is the slowest part of a build by a wide margin,
-# and none of the calls depend on each other.
+# Wikimedia, none of which depend on each other. Run in series it dominated
+# the build.
 HARVEST_WORKERS = 8
+# Portrait downloads, which feed a single-threaded encoder. Encoding is the
+# expensive half here, so this is sized to keep it fed, not to go faster.
 DOWNLOAD_WORKERS = 8
 
 # Article titles that are never people, but do rank highly.
