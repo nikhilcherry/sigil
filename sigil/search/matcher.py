@@ -9,12 +9,12 @@ and the face model is the judge.
 from __future__ import annotations
 
 import itertools
-from collections import deque
 from collections.abc import Callable, Iterable, Iterator
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..concurrency import prefetch
 from ..config import Config
 from ..evidence import sha256_hex
 from ..face import Face, cosine, decode_image
@@ -77,31 +77,6 @@ def score_image(encoder, probe: Face, image_bytes: bytes) -> tuple[float, int, l
     return best_sim, len(faces), best_box
 
 
-def _prefetch(
-    pool: ThreadPoolExecutor,
-    stream: Iterator[Candidate],
-    fetch: Callable[[Candidate], bytes | None],
-    window: int,
-) -> Iterator[tuple[Candidate, bytes | None]]:
-    """Download ahead of the consumer, yielding in submission order.
-
-    The encoder is single-threaded by design (see below), so a batch-synchronous
-    download-then-encode loop leaves every network worker idle for the whole
-    inference phase and vice versa. Keeping a fixed window of futures in flight
-    overlaps the two instead, and popping from the left preserves candidate
-    order so a run stays reproducible.
-    """
-    pending: deque[tuple[Candidate, Future[bytes | None]]] = deque()
-    for cand in stream:
-        pending.append((cand, pool.submit(fetch, cand)))
-        if len(pending) >= window:
-            done_cand, fut = pending.popleft()
-            yield done_cand, fut.result()
-    while pending:
-        done_cand, fut = pending.popleft()
-        yield done_cand, fut.result()
-
-
 def search_and_match(
     encoder,
     probe: Face,
@@ -129,9 +104,10 @@ def search_and_match(
 
     # Network in parallel, inference serially: the downloads are the slow part,
     # and keeping one thread on the ONNX session avoids fighting onnxruntime's
-    # own intra-op threading.
+    # own intra-op threading. The prefetch window is what makes the two
+    # overlap instead of alternate.
     with ThreadPoolExecutor(max_workers=DOWNLOAD_WORKERS) as pool:
-        for cand, blob in _prefetch(pool, stream, fetch, PREFETCH):
+        for cand, blob in prefetch(pool, stream, fetch, PREFETCH):
             if not blob:
                 continue
             result.images_examined += 1

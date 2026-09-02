@@ -26,6 +26,7 @@ from typing import Any
 
 import numpy as np
 
+from .concurrency import prefetch
 from .config import MODELS_DIR
 from .face import decode_image, largest_face
 from .search.http import fetch_image, make_session
@@ -34,6 +35,12 @@ PAGEVIEWS = "https://wikimedia.org/api/rest_v1/metrics/pageviews/top/{wiki}/all-
 DEFAULT_LANGS = ("en", "hi", "ta", "te", "ml", "bn", "mr", "kn", "es", "fr")
 INDEX_VECTORS = MODELS_DIR / "identity-index.npz"
 INDEX_META = MODELS_DIR / "identity-index.json"
+
+# The harvest is entirely network-bound - a few hundred small API calls to
+# Wikimedia. Run in series it is the slowest part of a build by a wide margin,
+# and none of the calls depend on each other.
+HARVEST_WORKERS = 8
+DOWNLOAD_WORKERS = 8
 
 # Article titles that are never people, but do rank highly.
 SKIP_PREFIXES = ("Special:", "Wikipedia:", "Main_Page", "Portal:", "File:",
@@ -71,25 +78,47 @@ def _months(count: int) -> list[str]:
     return out
 
 
+def _in_parallel(items, work):
+    """Run ``work`` over ``items`` concurrently, yielding results in order.
+
+    Ordered rather than as-completed on purpose: the batches are independent,
+    but merging them in a fixed order is what keeps a rebuild reproducible.
+    """
+    with ThreadPoolExecutor(max_workers=HARVEST_WORKERS) as pool:
+        for _item, result in prefetch(pool, items, work, HARVEST_WORKERS * 2):
+            yield result
+
+
+def _titles_for(session, lang: str, ym: str) -> set[str]:
+    url = PAGEVIEWS.format(wiki=f"{lang}.wikipedia", ym=ym)
+    titles: set[str] = set()
+    try:
+        r = session.get(url, timeout=30)
+        if r.status_code != 200:
+            return titles
+        for art in r.json()["items"][0]["articles"]:
+            t = art["article"]
+            if not t.startswith(SKIP_PREFIXES):
+                titles.add(t)
+    except Exception:  # noqa: BLE001 - a missing month is not fatal
+        return titles
+    return titles
+
+
 def popular_titles(session, langs: Iterable[str], months: int = 3) -> dict[str, set[str]]:
-    """Most-viewed article titles per wiki - where public figures concentrate."""
+    """Most-viewed article titles per wiki - where public figures concentrate.
+
+    One request per (wiki, month). They are independent, so they go out
+    concurrently; results are merged in a fixed order so a rebuild with the
+    same inputs produces the same index.
+    """
+    tasks = [(lang, ym) for lang in langs for ym in _months(months)]
     found: dict[str, set[str]] = {}
-    for lang in langs:
-        titles: set[str] = set()
-        for ym in _months(months):
-            url = PAGEVIEWS.format(wiki=f"{lang}.wikipedia", ym=ym)
-            try:
-                r = session.get(url, timeout=30)
-                if r.status_code != 200:
-                    continue
-                for art in r.json()["items"][0]["articles"]:
-                    t = art["article"]
-                    if not t.startswith(SKIP_PREFIXES):
-                        titles.add(t)
-            except Exception:  # noqa: BLE001 - a missing month is not fatal
-                continue
+    for (lang, _ym), titles in zip(
+        tasks, _in_parallel(tasks, lambda t: _titles_for(session, *t)), strict=True
+    ):
         if titles:
-            found[lang] = titles
+            found.setdefault(lang, set()).update(titles)
     return found
 
 
@@ -104,16 +133,18 @@ def resolve_people(session, lang: str, titles: list[str]) -> list[Identity]:
     qid_by_title: dict[str, str] = {}
     thumb_by_title: dict[str, str] = {}
 
-    for batch in _chunks(titles, 40):
+    def fetch_pages(batch: list[str]) -> list[dict]:
         try:
             r = session.get(api, params={
                 "action": "query", "format": "json", "formatversion": "2",
                 "prop": "pageprops|pageimages", "ppprop": "wikibase_item",
                 "piprop": "original", "titles": "|".join(batch),
             }, timeout=40)
-            pages = r.json().get("query", {}).get("pages", [])
-        except Exception:  # noqa: BLE001
-            continue
+            return r.json().get("query", {}).get("pages", [])
+        except Exception:  # noqa: BLE001 - one lost batch is not a failed build
+            return []
+
+    for pages in _in_parallel(list(_chunks(titles, 40)), fetch_pages):
         for pg in pages:
             qid = (pg.get("pageprops") or {}).get("wikibase_item")
             img = (pg.get("original") or {}).get("source")
@@ -127,16 +158,19 @@ def resolve_people(session, lang: str, titles: list[str]) -> list[Identity]:
     title_by_qid = {q: t for t, q in qid_by_title.items()}
     qids = list(qid_by_title.values())
     label_lang = "en"
-    for batch in _chunks(qids, 40):
+
+    def fetch_entities(batch: list[str]) -> dict:
         try:
             r = session.get("https://www.wikidata.org/w/api.php", params={
                 "action": "wbgetentities", "format": "json",
                 "ids": "|".join(batch), "props": "claims|labels",
                 "languages": f"{label_lang}|{lang}",
             }, timeout=40)
-            entities = r.json().get("entities", {})
-        except Exception:  # noqa: BLE001
-            continue
+            return r.json().get("entities", {})
+        except Exception:  # noqa: BLE001 - one lost batch is not a failed build
+            return {}
+
+    for entities in _in_parallel(list(_chunks(qids, 40)), fetch_entities):
         for qid, ent in entities.items():
             claims = ent.get("claims", {})
             # P31 (instance of) must include Q5 (human). Without this the index
@@ -193,11 +227,16 @@ def build_index(
     vectors: list[np.ndarray] = []
     kept: list[Identity] = []
 
-    def grab(ident: Identity):
-        return ident, fetch_image(session, ident.image_url, 30.0)
+    def grab(ident: Identity) -> bytes | None:
+        return fetch_image(session, ident.image_url, 30.0)
 
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        for done, (ident, blob) in enumerate(pool.map(grab, identities), 1):
+    # A bounded window, not pool.map: map submits every task up front, so on a
+    # few thousand portraits it queues every download at once and holds their
+    # bytes in memory ahead of an encoder that is thousands of images behind.
+    with ThreadPoolExecutor(max_workers=DOWNLOAD_WORKERS) as pool:
+        for done, (ident, blob) in enumerate(
+            prefetch(pool, identities, grab, DOWNLOAD_WORKERS * 3), 1
+        ):
             if done % 100 == 0:
                 say(f"  {done}/{len(identities)} · {len(kept)} usable faces")
             if not blob:

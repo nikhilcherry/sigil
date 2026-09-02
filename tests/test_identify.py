@@ -97,3 +97,119 @@ def test_non_person_titles_are_filtered_before_lookup():
     for junk in ("Special:Search", "Wikipedia:Featured_pictures", "Portal:Current_events"):
         assert junk.startswith(SKIP_PREFIXES)
     assert not "Aamir_Khan".startswith(SKIP_PREFIXES)
+
+
+# ------------------------------------------------------------------- harvesting
+
+
+class FakeSession:
+    """Stands in for requests.Session, dispatching on the URL like the real APIs."""
+
+    def __init__(self, pageviews=None, pages=None, entities=None, status=200):
+        self.pageviews = pageviews or {}
+        self.pages = pages or {}
+        self.entities = entities or {}
+        self.status = status
+        self.calls = []
+
+    def get(self, url, params=None, timeout=None):
+        self.calls.append((url, params))
+        session = self
+
+        class R:
+            status_code = session.status
+
+            @staticmethod
+            def json():
+                if "pageviews" in url:
+                    ym = "/".join(url.split("/")[-3:-1])
+                    arts = session.pageviews.get(ym, [])
+                    return {"items": [{"articles": [{"article": a} for a in arts]}]}
+                if "wikidata.org" in url:
+                    ids = params["ids"].split("|")
+                    return {"entities": {i: session.entities[i]
+                                         for i in ids if i in session.entities}}
+                titles = params["titles"].split("|")
+                return {"query": {"pages": [session.pages[t]
+                                            for t in titles if t in session.pages]}}
+
+        return R()
+
+
+def _entity(qid, name, instance_of="Q5"):
+    return {
+        "claims": {"P31": [{"mainsnak": {"datavalue": {"value": {"id": instance_of}}}}]},
+        "labels": {"en": {"value": name}},
+    }
+
+
+def _page(title, qid, img):
+    return {"title": title, "pageprops": {"wikibase_item": qid},
+            "original": {"source": img}}
+
+
+def test_popular_titles_merges_every_month_and_drops_non_articles(monkeypatch):
+    monkeypatch.setattr(idmod, "_months", lambda n: ["2026/07", "2026/08"])
+    session = FakeSession(pageviews={
+        "2026/07": ["Ada_Lovelace", "Special:Search"],
+        "2026/08": ["Alan_Turing", "Ada_Lovelace"],
+    })
+
+    found = idmod.popular_titles(session, ["en"], months=2)
+
+    assert found == {"en": {"Ada_Lovelace", "Alan_Turing"}}
+    assert len(session.calls) == 2, "one request per (wiki, month)"
+
+
+def test_popular_titles_survives_a_wiki_that_fails(monkeypatch):
+    """A missing month or an unreachable wiki must not sink the whole build."""
+    monkeypatch.setattr(idmod, "_months", lambda n: ["2026/08"])
+    session = FakeSession(pageviews={"2026/08": ["Ada_Lovelace"]}, status=404)
+
+    assert idmod.popular_titles(session, ["en"], months=1) == {}
+
+
+def test_resolve_people_keeps_humans_and_rejects_everything_else():
+    """Without the P31=Q5 check the index fills with film posters and album
+    covers, which do contain faces and would be matched confidently."""
+    session = FakeSession(
+        pages={
+            "Ada Lovelace": _page("Ada Lovelace", "Q7259", "https://x/ada.jpg"),
+            "Inception": _page("Inception", "Q25188", "https://x/poster.jpg"),
+        },
+        entities={
+            "Q7259": _entity("Q7259", "Ada Lovelace"),
+            "Q25188": _entity("Q25188", "Inception", instance_of="Q11424"),  # film
+        },
+    )
+
+    people = idmod.resolve_people(session, "en", ["Ada Lovelace", "Inception"])
+
+    assert [p.name for p in people] == ["Ada Lovelace"]
+    assert people[0].image_url == "https://x/ada.jpg"
+    assert people[0].source == "en.wikipedia"
+
+
+def test_resolve_people_skips_pages_with_no_portrait():
+    """A person with no image cannot be encoded, so they are not an identity."""
+    session = FakeSession(
+        pages={"Nobody": {"title": "Nobody", "pageprops": {"wikibase_item": "Q1"}}},
+        entities={"Q1": _entity("Q1", "Nobody")},
+    )
+
+    assert idmod.resolve_people(session, "en", ["Nobody"]) == []
+
+
+def test_resolve_people_batches_are_split_and_all_merged():
+    """Batching is an API limit, not a cap on results - nothing may be lost."""
+    n = 95
+    titles = [f"P{i}" for i in range(n)]
+    session = FakeSession(
+        pages={t: _page(t, f"Q{i}", f"https://x/{i}.jpg") for i, t in enumerate(titles)},
+        entities={f"Q{i}": _entity(f"Q{i}", f"Name {i}") for i in range(n)},
+    )
+
+    people = idmod.resolve_people(session, "en", titles)
+
+    assert len(people) == n
+    assert [p.name for p in people] == [f"Name {i}" for i in range(n)]
