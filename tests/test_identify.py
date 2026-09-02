@@ -405,3 +405,31 @@ def test_an_interrupt_before_any_face_still_refuses_to_write(tmp_path, monkeypat
 
     with pytest.raises(RuntimeError, match="network"):
         idmod.build_index(Interrupting(), langs=["en"], months=1)
+
+
+def test_a_partial_index_says_so_when_loaded(tmp_path, monkeypatch, index):
+    """"No match" against a partial index may only mean "not harvested yet"."""
+    vec_path, meta_path = tmp_path / "v.npz", tmp_path / "m.json"
+    np.savez_compressed(vec_path, vectors=index.vectors)
+    meta_path.write_text(json.dumps({
+        "backend": "insightface", "model": "x", "count": 3, "partial": True,
+        "identities": [i.to_dict() for i in index.identities],
+    }))
+    monkeypatch.setattr(idmod, "INDEX_VECTORS", vec_path)
+    monkeypatch.setattr(idmod, "INDEX_META", meta_path)
+
+    assert IdentityIndex.load().partial is True
+
+
+def test_an_index_without_the_flag_is_not_partial(tmp_path, monkeypatch, index):
+    """Indexes built before the flag existed must not read as interrupted."""
+    vec_path, meta_path = tmp_path / "v.npz", tmp_path / "m.json"
+    np.savez_compressed(vec_path, vectors=index.vectors)
+    meta_path.write_text(json.dumps({
+        "backend": "insightface", "model": "x", "count": 3,
+        "identities": [i.to_dict() for i in index.identities],
+    }))
+    monkeypatch.setattr(idmod, "INDEX_VECTORS", vec_path)
+    monkeypatch.setattr(idmod, "INDEX_META", meta_path)
+
+    assert IdentityIndex.load().partial is False

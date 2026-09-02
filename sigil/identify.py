@@ -283,10 +283,14 @@ def build_index(
 
 
 class IdentityIndex:
-    def __init__(self, vectors: np.ndarray, identities: list[Identity], backend: str) -> None:
+    def __init__(self, vectors: np.ndarray, identities: list[Identity], backend: str,
+                 partial: bool = False) -> None:
         self.vectors = vectors
         self.identities = identities
         self.backend = backend
+        # True when the build was interrupted, so "no match" may just mean
+        # "not harvested yet" rather than "not a public figure".
+        self.partial = partial
 
     @classmethod
     def load(cls, encoder=None) -> IdentityIndex:
@@ -304,7 +308,7 @@ class IdentityIndex:
             )
         vectors = np.load(INDEX_VECTORS)["vectors"]
         identities = [Identity(**d) for d in meta["identities"]]
-        return cls(vectors, identities, meta["backend"])
+        return cls(vectors, identities, meta["backend"], bool(meta.get("partial", False)))
 
     def __len__(self) -> int:
         return len(self.identities)

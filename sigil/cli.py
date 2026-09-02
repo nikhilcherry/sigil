@@ -423,6 +423,8 @@ def index_info():
     t.add_row("faces", str(len(idx)))
     t.add_row("backend", idx.backend)
     t.add_row("dimensions", str(idx.vectors.shape[1]))
+    if idx.partial:
+        t.add_row("state", "[yellow]partial[/yellow] - the build was interrupted")
     sources = {}
     for i in idx.identities:
         sources[i.source] = sources.get(i.source, 0) + 1
