@@ -23,17 +23,41 @@ run backends
 run scan "$PROBE"
 
 # Face -> name, before any search. Skipped cleanly if no index has been built.
+#
+# The no-query path is the interesting one, and it is also the one that can
+# legitimately come up empty: the index covers public figures, and a probe it
+# cannot name exits non-zero. Under `set -e` that would kill the recording
+# half way through, so it falls back to the explicit query instead of dying.
+pipeline_ran=0
 if "$PY" -m sigil.cli index info >/dev/null 2>&1; then
   run index info
-  run identify "$PROBE"
+  run identify "$PROBE" || true
   echo
   echo "\$ sigil run $PROBE          # no query: the face names itself"
-  "$PY" -m sigil.cli run "$PROBE"
+  if "$PY" -m sigil.cli run "$PROBE"; then
+    pipeline_ran=1
+  else
+    echo
+    echo "  (the index could not name this face — falling back to an explicit query)"
+  fi
 else
   echo
   echo "  (no identity index — build one with 'sigil index build' to run the"
   echo "   pipeline from a face alone; falling back to an explicit query)"
-  run run "$PROBE" -q "$QUERY"
+fi
+
+if [ "$pipeline_ran" -eq 0 ]; then
+  if run run "$PROBE" -q "$QUERY"; then
+    pipeline_ran=1
+  fi
+fi
+
+if [ "$pipeline_ran" -eq 0 ]; then
+  echo
+  echo "No match was found, so there is no evidence bundle to anchor or tamper"
+  echo "with. That is the honest outcome, not a crash — but it means the rest of"
+  echo "this demo has nothing to show. Try a different probe or a broader query."
+  exit 2
 fi
 run verify --probe "$PROBE" --recheck-source
 run tamper --field match.text
