@@ -154,3 +154,29 @@ def test_the_reported_provider_is_the_one_actually_used(encoder):
     import onnxruntime
 
     assert encoder.provider in onnxruntime.get_available_providers()
+
+
+def test_a_gpu_that_loads_but_cannot_infer_falls_back_to_cpu(monkeypatch):
+    """Loading a session and running one are separate failure points. A CUDA
+    provider can initialise and then fail on the first real call; finding that
+    out mid-search means dying part way through a run."""
+    from sigil.face.backends import insight
+
+    monkeypatch.setenv("SIGIL_GPU", "1")
+    attempts = []
+    real_load = insight.InsightFaceBackend._load
+
+    def load(self, det_size, providers):
+        attempts.append(providers[0])
+        real_load(self, det_size, ["CPUExecutionProvider"])
+
+    def broken_warm_up(self):
+        raise RuntimeError("CUDA kernel image is invalid for the device")
+
+    monkeypatch.setattr(insight.InsightFaceBackend, "_load", load)
+    monkeypatch.setattr(insight.InsightFaceBackend, "_warm_up", broken_warm_up)
+
+    backend = insight.InsightFaceBackend()
+
+    assert attempts == ["CUDAExecutionProvider", "CPUExecutionProvider"]
+    assert backend.provider == "CPUExecutionProvider"

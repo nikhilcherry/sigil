@@ -72,6 +72,7 @@ class InsightFaceBackend:
         if _want_gpu():
             try:
                 self._load(det_size, ["CUDAExecutionProvider", "CPUExecutionProvider"])
+                self._warm_up()
             except Exception:  # noqa: BLE001 - a GPU is an optimisation, never a requirement
                 # onnxruntime advertises the provider from the package build,
                 # not from what the machine can actually load: a missing cuDNN
@@ -80,6 +81,17 @@ class InsightFaceBackend:
         else:
             self._load(det_size, ["CPUExecutionProvider"])
         self.provider = self._active_provider()
+
+    def _warm_up(self) -> None:
+        """Run one throwaway inference before trusting the provider.
+
+        Loading a session and running one are separate failure points: a CUDA
+        provider can initialise and then fail on the first real call. Finding
+        that out here costs one pass over a blank 64x64 image and falls back to
+        CPU; finding it out later means dying part way through a search.
+        """
+        with _quiet():
+            self.app.get(np.zeros((64, 64, 3), dtype=np.uint8))
 
     def _load(self, det_size: int, providers: list[str]) -> None:
         from insightface.app import FaceAnalysis
