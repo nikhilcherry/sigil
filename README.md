@@ -206,6 +206,18 @@ It proposes; it does not decide. Google says "this image appears on these
 pages", and every image it returns is downloaded and run through the same
 encoder as everything else before anything is called a match.
 
+**The two arms make different claims, and the similarity scores show it.**
+Measured on the committed probe: the Vision arm examined 47 images, every one
+of which contained a face, and topped out at **0.9952** — because reverse image
+search mostly returns *the same photograph* republished elsewhere, so the face
+in it is trivially the same face. The Bluesky arm scored **0.7596** on a
+*different* photograph, that account's own avatar. The lower number is the
+stronger identity claim: same person, two unrelated images. The higher one is
+closer to provenance — "this exact picture also appears here". Both are real
+matches and both are verified by the same encoder, but they should not be read
+as the same kind of evidence, and the `discovered_via` field in the bundle
+records which is which.
+
 **Google Lens via SerpAPI** is the older open-web arm, kept because it is a
 different index. It activates only when `SERPAPI_KEY` is set *and* the probe is
 passed as a public `https://` URL, because Lens matches on a URL rather than an
