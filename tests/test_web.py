@@ -7,6 +7,7 @@ never be handed a half-finished answer.
 
 import json
 import threading
+import time
 import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
@@ -157,6 +158,11 @@ def test_a_finished_job_is_forgotten_once_streamed(app):
 
     _read_stream(f"{app}/api/stream?job={job.id}")
 
+    # The handler pops the job on its own thread, which can lag the client
+    # finishing its read - so wait for it rather than sampling once.
+    deadline = time.monotonic() + 10
+    while job.id in web.JOBS and time.monotonic() < deadline:
+        time.sleep(0.01)
     assert job.id not in web.JOBS
 
 
