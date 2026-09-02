@@ -23,6 +23,18 @@ and the match is decided by the face model rather than asserted by the code — 
 no candidate clears the threshold, **nothing is anchored**, which is the correct
 outcome rather than a failure.
 
+### Where each part lives
+
+| stage | implementation | see |
+|---|---|---|
+| Face detection + encoding | RetinaFace + ArcFace `w600k_r50`, 512-d; OpenCV YuNet + SFace as a keyless fallback | [`sigil/face/`](sigil/face/) · [§1](#1--face-encoding) |
+| Face → name | local index harvested from Wikipedia pageviews → Wikidata `P31=Q5` → Commons portraits | [`sigil/identify.py`](sigil/identify.py) · [§2](#2--identification--turning-a-face-into-a-name) |
+| Live social search | anonymous AT Protocol (`searchActors`, `getAuthorFeed`); Google Lens via SerpAPI when configured | [`sigil/search/`](sigil/search/) · [§3](#3--web--social-search) |
+| Blockchain record | keccak256 over a canonical evidence bundle → append-only Solidity registry, on a persisted local py-evm chain or any EVM node | [`contracts/SigilRegistry.sol`](contracts/SigilRegistry.sol) · [§4](#4--blockchain-verification) |
+| Re-verification | recompute the hash and check it against chain state, not against a log | `sigil verify` · [below](#verifying-and-proving-that-verification-bites) |
+
+The whole sequence, end to end, is `./scripts/demo.sh`.
+
 ---
 
 ## Quickstart
