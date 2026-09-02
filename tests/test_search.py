@@ -389,3 +389,194 @@ def test_a_failed_feed_is_recorded_once_not_twice():
                   if c["endpoint"] == "app.bsky.feed.getAuthorFeed"]
     assert len(feed_calls) == 2
     assert all(c["results"] == 0 for c in feed_calls)
+
+
+class FakeAuthSession:
+    """A session that can also answer createSession, like the real bsky.social."""
+
+    def __init__(self, token="jwt-123", auth_status=200):
+        self.token = token
+        self.auth_status = auth_status
+        self.seen = []
+
+    def post(self, url, json=None, timeout=None):
+        self.seen.append(("POST", url, json))
+        status, token = self.auth_status, self.token
+
+        class R:
+            status_code = status
+
+            @staticmethod
+            def json():
+                return {"accessJwt": token}
+
+        return R()
+
+    def get(self, url, params=None, headers=None, timeout=None):
+        self.seen.append(("GET", url, headers))
+        if "searchActors" in url:
+            body = {"actors": []}
+        else:
+            body = {"posts": [{
+                "uri": "at://did:plc:z/app.bsky.feed.post/9",
+                "author": {"handle": "z.bsky.social", "did": "did:plc:z"},
+                "record": {"text": "hello", "createdAt": "2026-01-01"},
+                "embed": {"images": [{"fullsize": "https://img/z.jpg"}]},
+            }]}
+
+        class R:
+            status_code = 200
+
+            @staticmethod
+            def json():
+                return body
+
+        return R()
+
+
+def _authed_provider(monkeypatch, **kw):
+    monkeypatch.setenv("BLUESKY_HANDLE", "me.bsky.social")
+    monkeypatch.setenv("BLUESKY_APP_PASSWORD", "app-pw")
+    session = FakeAuthSession(**kw)
+    monkeypatch.setattr("sigil.search.bluesky.make_session", lambda: session)
+    return BlueskyProvider(Config()), session
+
+
+def test_an_app_password_unlocks_post_search(monkeypatch):
+    """searchPosts is the one endpoint that needs a session. With credentials it
+    is used; the README's claim that it widens the net depends on this."""
+    provider, session = _authed_provider(monkeypatch)
+
+    assert provider.authenticated
+    urls = [c.image_url for c in provider.candidates("q")]
+
+    assert urls == ["https://img/z.jpg"]
+    endpoints = [c["endpoint"] for c in provider.trace.calls]
+    assert "app.bsky.feed.searchPosts" in endpoints
+
+
+def test_post_search_candidates_say_where_they_came_from(monkeypatch):
+    """The trace and the candidate must agree on provenance."""
+    provider, _ = _authed_provider(monkeypatch)
+
+    found = list(provider.candidates("q"))
+    assert all(c.discovered_via == "app.bsky.feed.searchPosts" for c in found)
+    assert found[0].post_url == "https://bsky.app/profile/z.bsky.social/post/9"
+
+
+def test_post_search_is_authenticated_against_the_auth_host(monkeypatch):
+    """An anonymous call to searchPosts 403s, so it must carry the bearer token
+    and go to bsky.social rather than the public AppView."""
+    provider, session = _authed_provider(monkeypatch)
+    list(provider.candidates("q"))
+
+    posts_call = [c for c in session.seen
+                  if c[0] == "GET" and "searchPosts" in c[1]][0]
+    assert posts_call[1].startswith("https://bsky.social/xrpc")
+    assert posts_call[2]["Authorization"] == "Bearer jwt-123"
+
+
+def test_failed_auth_degrades_to_anonymous_rather_than_failing(monkeypatch):
+    """Credentials are strictly an upgrade - a bad app password must not stop a
+    run that would have worked without one."""
+    provider, _ = _authed_provider(monkeypatch, auth_status=401)
+
+    assert not provider.authenticated
+    list(provider.candidates("q"))
+    endpoints = [c["endpoint"] for c in provider.trace.calls]
+    assert "app.bsky.feed.searchPosts" not in endpoints
+
+
+def test_no_credentials_means_no_post_search(monkeypatch):
+    monkeypatch.delenv("BLUESKY_HANDLE", raising=False)
+    monkeypatch.delenv("BLUESKY_APP_PASSWORD", raising=False)
+    session = FakeAuthSession()
+    monkeypatch.setattr("sigil.search.bluesky.make_session", lambda: session)
+
+    provider = BlueskyProvider(Config())
+
+    assert not provider.authenticated
+    assert not any(c[0] == "POST" for c in session.seen), "authenticated uninvited"
+
+
+class FakeSerpSession:
+    def __init__(self, payload, status=200):
+        self.payload = payload
+        self.status = status
+        self.params = None
+
+    def get(self, url, params=None, timeout=None):
+        self.params = params
+        payload, status = self.payload, self.status
+
+        class R:
+            status_code = status
+
+            @staticmethod
+            def json():
+                if isinstance(payload, Exception):
+                    raise payload
+                return payload
+
+        return R()
+
+
+def _serp(monkeypatch, payload, status=200):
+    cfg = Config()
+    cfg.serpapi_key = "secret-key"
+    session = FakeSerpSession(payload, status)
+    monkeypatch.setattr("sigil.search.serpapi.make_session", lambda: session)
+    return SerpApiLensProvider(cfg, "https://example.com/probe.jpg"), session
+
+
+def test_lens_visual_matches_become_candidates(monkeypatch):
+    provider, _ = _serp(monkeypatch, {"visual_matches": [
+        {"image": "https://img/1.jpg", "link": "https://site.example/post",
+         "source": "Site", "title": "a caption"},
+    ]})
+
+    found = list(provider.candidates("ignored"))
+
+    assert len(found) == 1
+    assert found[0].image_url == "https://img/1.jpg"
+    assert found[0].post_url == "https://site.example/post"
+    assert found[0].discovered_via == "serpapi:google_lens:visual_matches"
+
+
+def test_lens_matches_missing_an_image_or_link_are_dropped(monkeypatch):
+    """A candidate with no image cannot be face-verified, and one with no link
+    cannot be cited as evidence."""
+    provider, _ = _serp(monkeypatch, {"visual_matches": [
+        {"link": "https://site.example/a"},
+        {"image": "https://img/b.jpg"},
+        {"image": "https://img/c.jpg", "link": "https://site.example/c"},
+    ]})
+
+    assert [c.image_url for c in provider.candidates("q")] == ["https://img/c.jpg"]
+
+
+def test_the_api_key_never_reaches_the_evidence_trace(monkeypatch):
+    """The trace is written into the evidence bundle, which is published and
+    hashed on chain - a key in there is a key leaked permanently."""
+    provider, session = _serp(monkeypatch, {"visual_matches": []})
+
+    list(provider.candidates("q"))
+
+    assert session.params["api_key"] == "secret-key", "the key must still be sent"
+    assert "secret-key" not in str(provider.trace.calls)
+    assert provider.trace.calls[0]["params"] == {"url": "https://example.com/probe.jpg"}
+
+
+def test_a_failed_lens_call_yields_nothing_rather_than_raising(monkeypatch):
+    """The open-web arm is optional; its outage must not end the run."""
+    provider, _ = _serp(monkeypatch, {"visual_matches": [{"image": "i", "link": "l"}]},
+                        status=500)
+
+    assert list(provider.candidates("q")) == []
+    assert provider.trace.calls[0]["results"] == 0
+
+
+def test_malformed_lens_json_yields_nothing_rather_than_raising(monkeypatch):
+    provider, _ = _serp(monkeypatch, ValueError("not json"))
+
+    assert list(provider.candidates("q")) == []
