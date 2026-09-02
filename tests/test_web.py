@@ -253,3 +253,70 @@ def test_a_viewer_who_navigates_away_does_not_leak_the_job(app):
     while job.id in web.JOBS and time.monotonic() < deadline:
         time.sleep(0.05)
     assert job.id not in web.JOBS, "the abandoned job was never dropped"
+
+
+class _FakeHTTPD:
+    """Stands in for ThreadingHTTPServer so serve() can return."""
+
+    instances = []
+
+    def __init__(self, address, handler):
+        self.address = address
+        self.handler = handler
+        self.served = False
+        self.closed = False
+        _FakeHTTPD.instances.append(self)
+
+    def serve_forever(self):
+        self.served = True
+
+    def server_close(self):
+        self.closed = True
+
+
+@pytest.fixture
+def fake_httpd(monkeypatch):
+    _FakeHTTPD.instances = []
+    monkeypatch.setattr(web, "ThreadingHTTPServer", _FakeHTTPD)
+    return _FakeHTTPD
+
+
+def test_serve_binds_where_it_was_told(fake_httpd, monkeypatch):
+    """It binds to localhost by default on purpose - this tool searches for
+    people by face and has no authentication."""
+    opened = []
+    monkeypatch.setattr("webbrowser.open", opened.append)
+
+    web.serve(host="127.0.0.1", port=9123, open_browser=False)
+
+    httpd = fake_httpd.instances[0]
+    assert httpd.address == ("127.0.0.1", 9123)
+    assert httpd.served and httpd.closed, "the socket was not closed on the way out"
+    assert opened == []
+
+
+def test_serve_closes_the_socket_even_on_interrupt(fake_httpd, monkeypatch):
+    """Ctrl-C is the documented way to stop it, so it is the path that must not
+    leak the listening socket."""
+    monkeypatch.setattr("webbrowser.open", lambda url: None)
+
+    def interrupted(self):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(_FakeHTTPD, "serve_forever", interrupted)
+
+    web.serve(host="127.0.0.1", port=9124, open_browser=False)
+
+    assert fake_httpd.instances[0].closed
+
+
+def test_serve_opens_a_browser_only_when_asked(fake_httpd, monkeypatch):
+    opened = []
+    monkeypatch.setattr("webbrowser.open", opened.append)
+    # The real one fires on a Timer; run it inline so the test stays sequential.
+    monkeypatch.setattr(web.threading, "Timer",
+                        lambda delay, fn: type("T", (), {"start": staticmethod(fn)})())
+
+    web.serve(host="127.0.0.1", port=9125, open_browser=True)
+
+    assert opened == ["http://127.0.0.1:9125"]
