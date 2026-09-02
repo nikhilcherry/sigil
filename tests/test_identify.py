@@ -345,3 +345,63 @@ def test_build_index_respects_the_limit(tmp_path, monkeypatch):
                          bbox=[0, 0, 10, 10], det_score=0.9)]
 
     assert idmod.build_index(FakeEncoder(), langs=["en"], months=1, limit=3) == 3
+
+
+def test_an_interrupted_build_keeps_what_it_already_encoded(tmp_path, monkeypatch):
+    """Encoding a full index is the better part of an hour. Throwing that away
+    on a Ctrl-C is the wrong answer to "this is taking too long"."""
+    import numpy as np
+
+    from sigil.face import Face
+
+    people = [Identity(f"P{i}", f"Q{i}", f"https://x/{i}.jpg", "en.wikipedia")
+              for i in range(10)]
+    monkeypatch.setattr(idmod, "popular_titles", lambda s, langs, months: {"en": {"t"}})
+    monkeypatch.setattr(idmod, "resolve_people", lambda s, lang, titles: people)
+    monkeypatch.setattr(idmod, "fetch_image", lambda s, url, t: url.encode())
+    monkeypatch.setattr(idmod, "decode_image", lambda blob: blob)
+    monkeypatch.setattr(idmod, "INDEX_VECTORS", tmp_path / "v.npz")
+    monkeypatch.setattr(idmod, "INDEX_META", tmp_path / "m.json")
+    monkeypatch.setattr(idmod, "MODELS_DIR", tmp_path)
+
+    class InterruptingEncoder:
+        name = "insightface"
+        model = "m"
+
+        def detect_and_encode(self, img):
+            i = int(img.decode().rsplit("/", 1)[-1].split(".")[0])
+            if i == 3:
+                raise KeyboardInterrupt
+            v = np.zeros(10, dtype=np.float32)
+            v[i] = 1.0
+            return [Face(embedding=v, bbox=[0, 0, 10, 10], det_score=0.9)]
+
+    encoder = InterruptingEncoder()
+    assert idmod.build_index(encoder, langs=["en"], months=1) == 3
+
+    index = IdentityIndex.load(encoder)
+    assert [i.name for i in index.identities] == ["P0", "P1", "P2"]
+    assert json.loads((tmp_path / "m.json").read_text())["partial"] is True
+
+
+def test_an_interrupt_before_any_face_still_refuses_to_write(tmp_path, monkeypatch):
+    """A partial index of nothing is just an empty index by another name."""
+    monkeypatch.setattr(idmod, "popular_titles", lambda s, langs, months: {"en": {"t"}})
+    monkeypatch.setattr(
+        idmod, "resolve_people",
+        lambda s, lang, titles: [Identity("P", "Q", "https://x/0.jpg", "en.wikipedia")],
+    )
+    monkeypatch.setattr(idmod, "fetch_image", lambda s, url, t: url.encode())
+    monkeypatch.setattr(idmod, "decode_image", lambda blob: blob)
+    monkeypatch.setattr(idmod, "INDEX_VECTORS", tmp_path / "v.npz")
+    monkeypatch.setattr(idmod, "MODELS_DIR", tmp_path)
+
+    class Interrupting:
+        name = "insightface"
+        model = "m"
+
+        def detect_and_encode(self, img):
+            raise KeyboardInterrupt
+
+    with pytest.raises(RuntimeError, match="network"):
+        idmod.build_index(Interrupting(), langs=["en"], months=1)

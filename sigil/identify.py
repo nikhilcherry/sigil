@@ -235,22 +235,30 @@ def build_index(
     # A bounded window, not pool.map: map submits every task up front, so on a
     # few thousand portraits it queues every download at once and holds their
     # bytes in memory ahead of an encoder that is thousands of images behind.
-    with ThreadPoolExecutor(max_workers=DOWNLOAD_WORKERS) as pool:
-        for done, (ident, blob) in enumerate(
-            prefetch(pool, identities, grab, DOWNLOAD_WORKERS * 3), 1
-        ):
-            if done % 100 == 0:
-                say(f"  {done}/{len(identities)} · {len(kept)} usable faces")
-            if not blob:
-                continue
-            img = decode_image(blob)
-            if img is None:
-                continue
-            face = largest_face(encoder.detect_and_encode(img))
-            if face is None:
-                continue
-            vectors.append(face.embedding.astype(np.float32))
-            kept.append(ident)
+    partial = False
+    try:
+        with ThreadPoolExecutor(max_workers=DOWNLOAD_WORKERS) as pool:
+            for done, (ident, blob) in enumerate(
+                prefetch(pool, identities, grab, DOWNLOAD_WORKERS * 3), 1
+            ):
+                if done % 100 == 0:
+                    say(f"  {done}/{len(identities)} · {len(kept)} usable faces")
+                if not blob:
+                    continue
+                img = decode_image(blob)
+                if img is None:
+                    continue
+                face = largest_face(encoder.detect_and_encode(img))
+                if face is None:
+                    continue
+                vectors.append(face.embedding.astype(np.float32))
+                kept.append(ident)
+    except KeyboardInterrupt:
+        # Encoding a full index is the better part of an hour. Throwing that
+        # away on a Ctrl-C would be the wrong answer to "this is taking too
+        # long" - a smaller index is a working index.
+        partial = True
+        say(f"  interrupted · keeping the {len(kept)} portraits already encoded")
 
     if not vectors:
         raise RuntimeError("no faces could be encoded - is the network reachable?")
@@ -263,9 +271,11 @@ def build_index(
         "count": len(kept),
         "langs": list(langs),
         "months": months,
+        "partial": partial,
         "identities": [i.to_dict() for i in kept],
     }, ensure_ascii=False, indent=1))
-    say(f"index written: {len(kept)} faces ({encoder.name})")
+    say(f"index written: {len(kept)} faces ({encoder.name})"
+        + (" · partial, rerun to complete it" if partial else ""))
     return len(kept)
 
 
