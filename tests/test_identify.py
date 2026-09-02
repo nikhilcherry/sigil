@@ -433,3 +433,68 @@ def test_an_index_without_the_flag_is_not_partial(tmp_path, monkeypatch, index):
     monkeypatch.setattr(idmod, "INDEX_META", meta_path)
 
     assert IdentityIndex.load().partial is False
+
+
+def test_a_wiki_that_raises_does_not_sink_the_other_wikis(monkeypatch):
+    """The harvest fans out across ten language editions. One of them throwing
+    must cost that wiki's titles, not the build."""
+    monkeypatch.setattr(idmod, "_months", lambda n: ["2026/08"])
+
+    class FlakySession(FakeSession):
+        def get(self, url, params=None, timeout=None):
+            if "hi.wikipedia" in url:
+                raise ConnectionError("hi.wikipedia is having a day")
+            return super().get(url, params, timeout)
+
+    session = FlakySession(pageviews={"2026/08": ["Ada_Lovelace"]})
+
+    found = idmod.popular_titles(session, ["en", "hi", "ta"], months=1)
+
+    assert set(found) == {"en", "ta"}
+    assert found["en"] == {"Ada_Lovelace"}
+
+
+def test_a_failed_title_batch_costs_only_that_batch(monkeypatch):
+    """Batching is an API limit. A batch that throws must not take the rest of
+    the language's people with it."""
+    titles = [f"P{i}" for i in range(95)]
+
+    class FlakySession(FakeSession):
+        # Keyed on the batch's contents, not on call order: the batches are
+        # fetched concurrently, so "the second call" is not "the second batch".
+        def get(self, url, params=None, timeout=None):
+            if "wikidata.org" not in url and "pageviews" not in url:
+                if "P40" in (params or {}).get("titles", "").split("|"):
+                    raise TimeoutError("that batch timed out")
+            return super().get(url, params, timeout)
+
+    session = FlakySession(
+        pages={t: _page(t, f"Q{i}", f"https://x/{i}.jpg") for i, t in enumerate(titles)},
+        entities={f"Q{i}": _entity(f"Q{i}", f"Name {i}") for i in range(95)},
+    )
+
+    people = idmod.resolve_people(session, "en", titles)
+
+    # 95 titles in batches of 40; losing the second batch loses 40 of them.
+    assert len(people) == 55
+    assert "Name 0" in {p.name for p in people}
+    assert "Name 94" in {p.name for p in people}
+
+
+def test_a_failed_wikidata_batch_costs_only_that_batch(monkeypatch):
+    titles = [f"P{i}" for i in range(95)]
+
+    class FlakySession(FakeSession):
+        def get(self, url, params=None, timeout=None):
+            if "wikidata.org" in url and "Q40" in (params or {}).get("ids", "").split("|"):
+                raise ConnectionError("wikidata refused")
+            return super().get(url, params, timeout)
+
+    session = FlakySession(
+        pages={t: _page(t, f"Q{i}", f"https://x/{i}.jpg") for i, t in enumerate(titles)},
+        entities={f"Q{i}": _entity(f"Q{i}", f"Name {i}") for i in range(95)},
+    )
+
+    people = idmod.resolve_people(session, "en", titles)
+
+    assert len(people) == 55
