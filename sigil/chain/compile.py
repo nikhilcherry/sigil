@@ -25,11 +25,16 @@ def compile_registry(force: bool = False) -> dict[str, Any]:
     """Return {'abi': [...], 'bytecode': '0x...'} for SigilRegistry."""
     src_mtime = SOURCE.stat().st_mtime
     if ARTIFACT.exists() and not force:
-        cached = json.loads(ARTIFACT.read_text())
-        # Recompile when the source moved on, so a contract edit can never be
-        # silently shadowed by a stale artifact.
-        if cached.get("source_mtime") == src_mtime:
-            return cached
+        try:
+            cached = json.loads(ARTIFACT.read_text())
+            # Recompile when the source moved on, so a contract edit can never
+            # be silently shadowed by a stale artifact.
+            if cached.get("source_mtime") == src_mtime:
+                return cached
+        except (json.JSONDecodeError, OSError, AttributeError):
+            # The artifact is a cache of a deterministic build. An unreadable
+            # one means recompile, not stop - the source is the truth here.
+            pass
 
     _ensure_solc()
     compiled = solcx.compile_files(
