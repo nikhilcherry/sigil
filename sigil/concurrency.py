@@ -39,11 +39,18 @@ def prefetch(
     if window < 1:
         raise ValueError("window must be >= 1")
     pending: deque[tuple[T, Future[R]]] = deque()
-    for item in items:
-        pending.append((item, pool.submit(work, item)))
-        if len(pending) >= window:
+    try:
+        for item in items:
+            pending.append((item, pool.submit(work, item)))
+            if len(pending) >= window:
+                done, fut = pending.popleft()
+                yield done, fut.result()
+        while pending:
             done, fut = pending.popleft()
             yield done, fut.result()
-    while pending:
-        done, fut = pending.popleft()
-        yield done, fut.result()
+    finally:
+        # A consumer is free to stop early - islice(max_images) does exactly
+        # that. Without this, the read-ahead it never asked for would still be
+        # run to completion by the pool's shutdown, which waits on queued work.
+        for _item, fut in pending:
+            fut.cancel()

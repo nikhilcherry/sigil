@@ -85,3 +85,26 @@ def test_an_exception_in_the_work_reaches_the_caller():
     with ThreadPoolExecutor(max_workers=4) as pool:
         with pytest.raises(RuntimeError, match="boom"):
             list(prefetch(pool, range(10), work, 4))
+
+
+def test_abandoning_the_stream_cancels_the_read_ahead():
+    """A consumer may stop early - islice(max_images) does exactly that.
+
+    The work it never asked for must not still be run to completion by the
+    pool's shutdown, which otherwise waits on everything already queued.
+    """
+    done = []
+
+    def work(i):
+        time.sleep(0.05)
+        done.append(i)
+        return i
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        stream = prefetch(pool, range(30), work, window=10)
+        next(stream)
+        stream.close()
+
+    # One worker, so leaving after the first result should finish at most the
+    # one already in progress. Ten means the entire queued window still ran.
+    assert len(done) <= 3, f"the abandoned read-ahead still ran ({len(done)} items)"
