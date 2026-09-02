@@ -126,9 +126,17 @@ So `sigil` builds a local face→name index of public figures:
 
 ```bash
 sigil index build            # harvest + encode; keyless, no API keys at all
+sigil index build --limit 500  # a smaller one, if you just want to try the path
 sigil index info             # what's in it
 sigil identify photo.jpg     # just the naming step
 ```
+
+Measured on one laptop: 3,820 people harvested from the ten wikis in about four
+minutes, then roughly an hour to download and encode their portraits — 3,583
+usable faces, since a portrait with no detectable face is dropped. Encoding is
+effectively all of that hour, at about 0.8 s per portrait on CPU, so `--limit`
+is the knob that matters if you only want to see the path work. An interrupted
+build keeps whatever it had already encoded and marks the index partial.
 
 Then a query becomes optional. Omit it and the face is named first, and the name
 seeds the social search:
@@ -137,6 +145,10 @@ seeds the social search:
 sigil run photo.jpg          # who is this → find their posts → anchor
 sigil run photo.jpg -q "…"   # skip identification, search directly
 ```
+
+Against that index the committed example probe names itself at **0.9720**
+cosine, with the runner-up at 0.2105 — the gap, not the absolute number, is
+what makes the call safe.
 
 Naming a stranger is a higher-stakes call than confirming a match you were
 already looking for, so this stage uses a stricter bar (0.45 vs 0.38 cosine).
