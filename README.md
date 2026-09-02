@@ -60,15 +60,18 @@ Stage 1/5 · Face scan
   embedding sha256  b279a48ef65f075f…
 
 Stage 2/5 · Web / social search
-  images fetched      57
-  images with a face   9
-  live API calls       5
+  images fetched     185
+  images with a face  45
+  faces compared     151
+  duplicate images    17  (score reused)
+  live API calls      10
 
-  #   similarity   account          found via
-  1       0.7585   aoc.bsky.social  actor.searchActors:avatar
-  2       0.0778   pfrazee.com      feed.getAuthorFeed
+  #   similarity   account                       found via
+  1       0.7596   aoc.bsky.social               actor.searchActors:avatar
+  2       0.6920   aoc.bsky.social               feed.getAuthorFeed
+  3       0.5660   africanprincess7.bsky.social  feed.getAuthorFeed
 
-Stage 3/5 · Face match          0.7585  (threshold 0.380)
+Stage 3/5 · Face match          0.7596  (threshold 0.380)
 Stage 4/5 · Blockchain anchor   tx 0x9c202d06…  block 2  gas 114,222
 Stage 5/5 · Re-verification     VERIFIED
 ```
