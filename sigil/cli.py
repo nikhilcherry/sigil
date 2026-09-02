@@ -392,13 +392,17 @@ def backends():
     t.add_column("backend")
     t.add_column("status")
     t.add_column("model")
+    t.add_column("runs on")
     for name in ("insightface", "opencv"):
         try:
             enc = load_encoder(name)
             status = "[green]ready[/green]" if enc.name == name else "[yellow]fell back[/yellow]"
-            t.add_row(name, status, enc.model)
+            # The provider actually in use, read back from the loaded session -
+            # asking for CUDA is not evidence that CUDA answered.
+            runs_on = getattr(enc, "provider", "CPUExecutionProvider")
+            t.add_row(name, status, enc.model, runs_on.replace("ExecutionProvider", ""))
         except Exception as exc:  # noqa: BLE001
-            t.add_row(name, "[red]unavailable[/red]", str(exc)[:60])
+            t.add_row(name, "[red]unavailable[/red]", str(exc)[:60], "-")
     console.print(t)
 
 

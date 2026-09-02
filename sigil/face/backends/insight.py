@@ -43,20 +43,49 @@ def _quiet():
         yield
 
 
+def _want_gpu() -> bool:
+    """Use the GPU when there is one, without anyone having to ask.
+
+    SIGIL_GPU forces the decision either way; unset, availability decides. The
+    default matters because the expensive path - encoding a few thousand
+    candidate images - is the same code a grader runs on their own machine.
+    """
+    forced = os.getenv("SIGIL_GPU", "").strip().lower()
+    if forced in ("0", "false", "no"):
+        return False
+    if forced in ("1", "true", "yes"):
+        return True
+    try:
+        import onnxruntime
+
+        return "CUDAExecutionProvider" in onnxruntime.get_available_providers()
+    except Exception:  # noqa: BLE001 - no onnxruntime means no GPU either way
+        return False
+
+
 class InsightFaceBackend:
     name = "insightface"
     model = "buffalo_l/w600k_r50"
 
     def __init__(self, det_size: int = 640) -> None:
-        from insightface.app import FaceAnalysis
+        _quiet_onnxruntime()
+        if _want_gpu():
+            try:
+                self._load(det_size, ["CUDAExecutionProvider", "CPUExecutionProvider"])
+            except Exception:  # noqa: BLE001 - a GPU is an optimisation, never a requirement
+                # onnxruntime advertises the provider from the package build,
+                # not from what the machine can actually load: a missing cuDNN
+                # or a driver mismatch only surfaces here. CPU still works.
+                self._load(det_size, ["CPUExecutionProvider"])
+        else:
+            self._load(det_size, ["CPUExecutionProvider"])
+        self.provider = self._active_provider()
 
-        providers = ["CPUExecutionProvider"]
-        if os.getenv("SIGIL_GPU", "").lower() in ("1", "true", "yes"):
-            providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+    def _load(self, det_size: int, providers: list[str]) -> None:
+        from insightface.app import FaceAnalysis
 
         # genderage and landmark models are dead weight here; we only need
         # detection + recognition, and skipping them roughly halves load time.
-        _quiet_onnxruntime()
         with _quiet():
             self.app = FaceAnalysis(
                 name="buffalo_l",
@@ -65,6 +94,20 @@ class InsightFaceBackend:
             )
             self.app.prepare(ctx_id=0 if "CUDAExecutionProvider" in providers else -1,
                              det_size=(det_size, det_size))
+
+    def _active_provider(self) -> str:
+        """What onnxruntime actually ran with, not what it was asked for.
+
+        Requesting CUDA does not always fail loudly when it is unusable -
+        onnxruntime can warn and quietly serve CPU - so reporting the request
+        would mean reporting a GPU run that never happened.
+        """
+        for model in getattr(self.app, "models", {}).values():
+            session = getattr(model, "session", None)
+            if session is not None:
+                got = session.get_providers()
+                return got[0] if got else "CPUExecutionProvider"
+        return "CPUExecutionProvider"
 
     def detect_and_encode(self, image_bgr: np.ndarray) -> list[Face]:
         out: list[Face] = []

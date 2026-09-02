@@ -107,3 +107,50 @@ def test_a_random_vector_is_near_orthogonal_to_a_real_face(encoder, probe_image)
     face = largest_face(encoder.detect_and_encode(decode_image(probe_image)))
     noise = rng.normal(size=face.embedding.shape).astype(np.float32)
     assert abs(cosine(face.embedding, noise)) < 0.3
+
+
+# ------------------------------------------------------- execution provider
+
+
+def test_gpu_is_used_when_available_without_being_asked(monkeypatch):
+    """The expensive path is the same code a grader runs on their own machine,
+    so a usable GPU should not need an env var to be found."""
+    import onnxruntime
+
+    from sigil.face.backends import insight
+
+    monkeypatch.delenv("SIGIL_GPU", raising=False)
+
+    monkeypatch.setattr(
+        onnxruntime, "get_available_providers",
+        lambda: ["CUDAExecutionProvider", "CPUExecutionProvider"],
+    )
+    assert insight._want_gpu() is True
+
+    monkeypatch.setattr(
+        onnxruntime, "get_available_providers", lambda: ["CPUExecutionProvider"]
+    )
+    assert insight._want_gpu() is False
+
+
+@pytest.mark.parametrize("value,expected", [
+    ("1", True), ("true", True), ("YES", True), (" 1 ", True),
+    ("0", False), ("false", False), ("no", False),
+])
+def test_sigil_gpu_forces_the_decision_either_way(monkeypatch, value, expected):
+    """Forcing it off matters on a machine where CUDA loads but misbehaves."""
+    from sigil.face.backends import insight
+
+    monkeypatch.setenv("SIGIL_GPU", value)
+    assert insight._want_gpu() is expected
+
+
+def test_the_reported_provider_is_the_one_actually_used(encoder):
+    """Requesting CUDA does not always fail loudly when it is unusable, so the
+    request is not evidence that a GPU ran."""
+    if encoder.name != "insightface":
+        pytest.skip("provider reporting is an insightface concern")
+
+    import onnxruntime
+
+    assert encoder.provider in onnxruntime.get_available_providers()
