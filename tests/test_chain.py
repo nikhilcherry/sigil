@@ -163,3 +163,116 @@ def test_an_unrelated_rpc_error_is_not_disguised_as_a_funding_problem(cfg, monke
 
     with pytest.raises(ValueError, match="already anchored"):
         client._send(_FakeFn())
+
+
+# ------------------------------------------------ re-checking the source image
+
+
+def _anchored_with_image(client, evidence, blob):
+    """Anchor a bundle whose recorded image digest matches `blob`."""
+    from sigil.evidence import sha256_hex
+
+    evidence.match.image_sha256 = sha256_hex(blob)
+    client.anchor(evidence)
+    return evidence
+
+
+def test_recheck_source_passes_when_the_post_image_is_unchanged(client, evidence,
+                                                                monkeypatch):
+    """The chain proves the bundle did not change; this proves the world did not
+    change underneath it."""
+    import sigil.search.http as http
+
+    blob = b"the original post image bytes"
+    ev = _anchored_with_image(client, evidence, blob)
+    monkeypatch.setattr(http, "fetch_image", lambda s, u, t: blob)
+
+    v = client.verify(ev, recheck_source=True)
+
+    assert v.source_image_intact is True
+    assert v.ok
+
+
+def test_recheck_source_fails_when_the_image_bytes_changed(client, evidence,
+                                                           monkeypatch):
+    """An edited or swapped image must show up rather than passing silently."""
+    import sigil.search.http as http
+
+    ev = _anchored_with_image(client, evidence, b"the original post image bytes")
+    monkeypatch.setattr(http, "fetch_image", lambda s, u, t: b"different bytes now")
+
+    v = client.verify(ev, recheck_source=True)
+
+    assert v.source_image_intact is False
+    assert not v.ok
+    assert any("bytes changed" in n for n in v.notes)
+
+
+def test_recheck_source_fails_when_the_post_is_gone(client, evidence, monkeypatch):
+    """A deleted or protected post is a different failure from an edited one,
+    and says so."""
+    import sigil.search.http as http
+
+    ev = _anchored_with_image(client, evidence, b"the original post image bytes")
+    monkeypatch.setattr(http, "fetch_image", lambda s, u, t: None)
+
+    v = client.verify(ev, recheck_source=True)
+
+    assert v.source_image_intact is False
+    assert any("no longer retrievable" in n for n in v.notes)
+
+
+def test_a_check_that_was_not_requested_reads_as_none_not_as_a_pass(client, evidence):
+    """An optional check nobody ran must never be reported as having passed."""
+    client.anchor(evidence)
+
+    v = client.verify(evidence)
+
+    assert v.source_image_intact is None
+    assert v.probe_matches is None
+    assert v.ok, "unrequested checks must not drag the verdict down either"
+
+
+# --------------------------------------------------------------- rpc wiring
+
+
+def test_rpc_without_an_endpoint_says_which_variable_is_missing(cfg):
+    cfg.chain_backend = "rpc"
+    cfg.rpc_url = None
+
+    with pytest.raises(RuntimeError, match="SIGIL_RPC_URL"):
+        ChainClient(cfg)
+
+
+def test_rpc_without_a_key_says_which_variable_is_missing(cfg):
+    cfg.chain_backend = "rpc"
+    cfg.rpc_url = "https://node.example"
+    cfg.private_key = None
+
+    with pytest.raises(RuntimeError, match="SIGIL_PRIVATE_KEY"):
+        ChainClient(cfg)
+
+
+def test_an_unreachable_endpoint_names_the_endpoint(cfg, monkeypatch):
+    """The usual cause is a dead public RPC, so the message has to say which."""
+    import sigil.chain.client as client_mod
+
+    cfg.chain_backend = "rpc"
+    cfg.rpc_url = "https://node.example"
+    cfg.private_key = "0x" + "11" * 32
+
+    class DeadWeb3:
+        def __init__(self, provider):
+            self.middleware_onion = type("M", (), {"inject": lambda *a, **k: None})()
+
+        @staticmethod
+        def HTTPProvider(url, request_kwargs=None):  # noqa: N802
+            return object()
+
+        def is_connected(self):
+            return False
+
+    monkeypatch.setattr(client_mod, "Web3", DeadWeb3)
+
+    with pytest.raises(RuntimeError, match="node.example"):
+        ChainClient(cfg)
