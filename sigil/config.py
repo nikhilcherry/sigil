@@ -38,14 +38,37 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def _env_threshold() -> float | None:
+    """Parse SIGIL_THRESHOLD, refusing rather than defaulting on nonsense.
+
+    Every other knob here falls back to its default when it cannot be parsed,
+    because a malformed page size is not worth ending a run over. The threshold
+    is different: it is the decision boundary between "this is the same person"
+    and "this is not". Silently substituting 0.38 for a typo'd 0.5 would accept
+    matches the operator meant to reject, and nothing downstream would show it.
+    """
+    raw = os.getenv("SIGIL_THRESHOLD", "").strip()
+    if not raw:
+        return None
+    try:
+        value = float(raw)
+    except ValueError:
+        raise ValueError(
+            f"SIGIL_THRESHOLD must be a number, got {raw!r}. It sets the match "
+            "decision boundary, so it is not defaulted silently."
+        ) from None
+    if not -1.0 <= value <= 1.0:
+        raise ValueError(
+            f"SIGIL_THRESHOLD must be a cosine similarity between -1 and 1, "
+            f"got {value}. Above 1 nothing can ever match; below -1 everything does."
+        )
+    return value
+
+
 @dataclass
 class Config:
     face_backend: str = field(default_factory=lambda: os.getenv("SIGIL_FACE_BACKEND", "auto"))
-    threshold: float | None = field(
-        default_factory=lambda: float(os.environ["SIGIL_THRESHOLD"])
-        if os.getenv("SIGIL_THRESHOLD")
-        else None
-    )
+    threshold: float | None = field(default_factory=_env_threshold)
 
     # --- search ---
     max_actors: int = field(default_factory=lambda: _env_int("SIGIL_MAX_ACTORS", 25))

@@ -41,7 +41,11 @@ def _chain_errors():
 
 
 def _cfg(**overrides) -> Config:
-    cfg = Config()
+    try:
+        cfg = Config()
+    except ValueError as exc:
+        # A malformed knob in the environment is the caller's typo, not a bug.
+        raise click.ClickException(str(exc)) from exc
     for k, v in overrides.items():
         if v is not None:
             setattr(cfg, k, v)
