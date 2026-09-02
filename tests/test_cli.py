@@ -262,3 +262,49 @@ def test_identify_names_a_face_from_the_index(offline, monkeypatch):
 
     assert result.exit_code == 0, result.output
     assert "A Known Person" in result.output
+
+
+def test_index_build_passes_its_options_through(monkeypatch):
+    """This command runs for the better part of an hour. A wiring bug in it is
+    only discovered after that hour has been spent."""
+    import sigil.identify as idmod
+
+    seen = {}
+
+    def fake_build(encoder, langs, months, limit, on_progress):
+        seen.update(langs=langs, months=months, limit=limit)
+        on_progress("harvesting")
+        return 42
+
+    monkeypatch.setattr(idmod, "build_index", fake_build)
+
+    result = CliRunner().invoke(cli, ["index", "build", "--langs", "en, fr ,ta",
+                                      "--months", "2", "--limit", "500"])
+
+    assert result.exit_code == 0, result.output
+    assert seen["langs"] == ("en", "fr", "ta"), "whitespace was not stripped"
+    assert seen["months"] == 2
+    assert seen["limit"] == 500
+    assert "harvesting" in result.output, "progress was not surfaced"
+    assert "indexed 42 faces" in result.output
+
+
+def test_index_build_defaults_to_the_ten_language_spread(monkeypatch):
+    """The non-English editions are the reason the index covers non-Western
+    figures at all, so the default must not quietly become English-only."""
+    import sigil.identify as idmod
+
+    seen = {}
+
+    def fake_build(encoder, langs, months, limit, on_progress):
+        seen["langs"] = langs
+        return 0
+
+    monkeypatch.setattr(idmod, "build_index", fake_build)
+
+    result = CliRunner().invoke(cli, ["index", "build"])
+
+    assert result.exit_code == 0, result.output
+    assert seen["langs"] == idmod.DEFAULT_LANGS
+    assert len(seen["langs"]) == 10
+    assert "hi" in seen["langs"] and "ta" in seen["langs"]
