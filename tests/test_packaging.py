@@ -6,9 +6,13 @@ install from requirements.txt. When those disagree, the environment that was
 tested is not the environment that was built.
 """
 
-import tomllib
+import pytest
 
 from tests.conftest import ROOT
+
+# tomllib is 3.11+, and this package supports 3.10. A test helper must not be
+# what raises the floor, so it skips there rather than failing to import.
+tomllib = pytest.importorskip("tomllib")
 
 REQUIREMENTS = ROOT / "requirements.txt"
 PYPROJECT = ROOT / "pyproject.toml"
