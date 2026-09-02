@@ -67,6 +67,19 @@ class InsightFaceBackend:
     name = "insightface"
     model = "buffalo_l/w600k_r50"
 
+    # det_size is the obvious speed knob and it is the wrong one to turn.
+    # Detection at this size is ~97% of a run's CPU, so shrinking it looks
+    # free - but it is paid for in recall, not accuracy. Measured over 60 real
+    # Bluesky candidate images, of the 11 that yielded a face at 640:
+    #
+    #   det_size 480  -26% time,  4 of those 11 images detect nothing at all
+    #   det_size 320  -53% time,  6 of those 11 images detect nothing at all
+    #
+    # The similarity of a face that is still found barely moves, so a quick
+    # check makes the change look safe. It is not: an image the detector never
+    # sees cannot match, and a smaller or off-angle face in a group photo is
+    # exactly the candidate that disappears first. Reporting "no match" because
+    # the detector was run too cheaply is the worst failure this tool has.
     def __init__(self, det_size: int = 640) -> None:
         _quiet_onnxruntime()
         if _want_gpu():
