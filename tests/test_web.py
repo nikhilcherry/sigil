@@ -114,3 +114,59 @@ def test_verify_endpoint_confirms_an_anchored_bundle(app, evidence, cfg):
     assert status == 200
     assert body["anchored"] is True
     assert body["probe_matches"] is True
+
+
+def _read_stream(url, limit=10):
+    """Collect SSE frames until the end event or `limit` frames."""
+    frames = []
+    with urllib.request.urlopen(url, timeout=30) as r:
+        assert r.headers["Content-Type"] == "text/event-stream"
+        for raw in r:
+            line = raw.decode().rstrip("\n")
+            if not line:
+                continue
+            frames.append(line)
+            if line.startswith("event: end") or len(frames) >= limit:
+                break
+    return frames
+
+
+def test_the_event_stream_delivers_events_then_ends(app):
+    """The browser drives the whole UI off this stream; if it never terminates,
+    the page sits on a spinner after a finished run."""
+    job = web.Job()
+    web.JOBS[job.id] = job
+    job.emit({"type": "stage", "stage": "scan", "status": "start"})
+    job.emit({"type": "probe", "backend": "insightface"})
+    job.finish()
+
+    frames = _read_stream(f"{app}/api/stream?job={job.id}")
+
+    payloads = [json.loads(f[len("data: "):]) for f in frames if f.startswith("data: ")]
+    assert payloads[0]["type"] == "stage"
+    assert payloads[1]["backend"] == "insightface"
+    assert any(f.startswith("event: end") for f in frames)
+
+
+def test_a_finished_job_is_forgotten_once_streamed(app):
+    """JOBS would otherwise grow for the life of the process, holding every
+    event of every run in memory."""
+    job = web.Job()
+    web.JOBS[job.id] = job
+    job.finish()
+
+    _read_stream(f"{app}/api/stream?job={job.id}")
+
+    assert job.id not in web.JOBS
+
+
+def test_the_stream_closes_the_connection_rather_than_keeping_it_alive(app):
+    """An event stream has no Content-Length, so a keep-alive connection leaves
+    the client unable to tell "finished" from "still thinking"."""
+    job = web.Job()
+    web.JOBS[job.id] = job
+    job.finish()
+
+    with urllib.request.urlopen(f"{app}/api/stream?job={job.id}", timeout=30) as r:
+        assert r.headers["Connection"] == "close"
+        assert r.headers.get("Content-Length") is None

@@ -30,11 +30,14 @@ def test_it_reads_ahead_far_enough_to_keep_workers_busy():
     """The whole point: work is in flight before the consumer asks for it."""
     lock = threading.Lock()
     started = 0
+    enough = threading.Event()
 
     def work(i):
         nonlocal started
         with lock:
             started += 1
+            if started >= 4:
+                enough.set()
         time.sleep(0.05)
         return i
 
@@ -42,9 +45,10 @@ def test_it_reads_ahead_far_enough_to_keep_workers_busy():
         stream = prefetch(pool, range(20), work, 8)
         next(stream)  # pull one result
         # By the time one result is out, every worker must already be busy on
-        # the ones behind it - that is what "overlapped" means here.
-        with lock:
-            assert started >= 4
+        # the ones behind it - that is what "overlapped" means here. Waited for
+        # rather than sampled: on a loaded machine the threads are certain to
+        # start, but not certain to have started by any particular instant.
+        assert enough.wait(timeout=10), f"only {started} of 4 workers ever started"
         list(stream)
 
 
