@@ -267,3 +267,125 @@ def test_prefetch_preserves_candidate_order(monkeypatch):
     )
 
     assert [s.candidate.image_url for s in result.ranked] == urls[:20]
+
+
+class FakeBskySession:
+    """Stands in for the AppView, and records how many calls overlap."""
+
+    def __init__(self, actors, delay=0.02):
+        import threading
+
+        self.actors = actors
+        self.delay = delay
+        self.lock = threading.Lock()
+        self.in_flight = 0
+        self.max_in_flight = 0
+
+    def get(self, url, params=None, headers=None, timeout=None):
+        import time
+
+        with self.lock:
+            self.in_flight += 1
+            self.max_in_flight = max(self.max_in_flight, self.in_flight)
+        try:
+            time.sleep(self.delay)
+            if "searchActors" in url:
+                body = {"actors": self.actors}
+            else:
+                who = params["actor"]
+                body = {"feed": [{"post": {
+                    "uri": f"at://{who}/app.bsky.feed.post/1",
+                    "author": {"handle": who, "did": f"did:{who}"},
+                    "record": {"text": "hi", "createdAt": "2026-01-01"},
+                    "embed": {"images": [{"fullsize": f"https://img/{who}.jpg"}]},
+                }}]}
+        finally:
+            with self.lock:
+                self.in_flight -= 1
+
+        class R:
+            status_code = 200
+
+            @staticmethod
+            def json():
+                return body
+
+        return R()
+
+
+def _bsky_provider(actors, delay=0.02):
+    p = BlueskyProvider(Config())
+    p.session = FakeBskySession(actors, delay)
+    return p
+
+
+def _actors(n):
+    return [{"handle": f"a{i}.bsky.social", "did": f"did:{i}",
+             "displayName": f"A{i}", "avatar": f"https://av/{i}.jpg"} for i in range(n)]
+
+
+def test_author_feeds_are_fetched_concurrently():
+    """One round trip per matching account, and they do not depend on each other.
+
+    Serially this is the single largest wait in a run.
+    """
+    provider = _bsky_provider(_actors(12))
+    list(provider.candidates("q"))
+
+    assert provider.session.max_in_flight > 1
+
+
+def test_concurrent_feeds_do_not_reorder_the_candidate_stream():
+    """Order must match a serial run exactly: avatar then posts, actor by actor.
+
+    Ranking breaks ties on arrival order, so a reordered stream would make a
+    run unreproducible.
+    """
+    provider = _bsky_provider(_actors(8))
+    urls = [c.image_url for c in provider.candidates("q")]
+
+    expected = []
+    for i in range(8):
+        expected.append(f"https://av/{i}.jpg")
+        expected.append(f"https://img/a{i}.bsky.social.jpg")
+    assert urls == expected
+
+
+def test_the_trace_stays_in_actor_order_despite_concurrency():
+    """The trace is audit evidence; it is written on the consuming thread so it
+    reads the same as a serial run rather than in completion order."""
+    provider = _bsky_provider(_actors(6))
+    list(provider.candidates("q"))
+
+    endpoints = [c["endpoint"] for c in provider.trace.calls]
+    assert endpoints[0] == "app.bsky.actor.searchActors"
+    assert endpoints[1:] == ["app.bsky.feed.getAuthorFeed"] * 6
+    assert [c["params"]["actor"] for c in provider.trace.calls[1:]] == [
+        f"a{i}.bsky.social" for i in range(6)
+    ]
+
+
+def test_a_failed_feed_is_recorded_once_not_twice():
+    """The trace is the difference between "it searched" and "it claims it
+    searched" - a failure that appears twice overstates what was asked."""
+    provider = _bsky_provider(_actors(2))
+    real_get = provider.session.get
+
+    def failing(url, params=None, headers=None, timeout=None):
+        if "getAuthorFeed" in url:
+            class R:
+                status_code = 500
+
+                @staticmethod
+                def json():
+                    return {}
+            return R()
+        return real_get(url, params, headers, timeout)
+
+    provider.session.get = failing
+    list(provider.candidates("q"))
+
+    feed_calls = [c for c in provider.trace.calls
+                  if c["endpoint"] == "app.bsky.feed.getAuthorFeed"]
+    assert len(feed_calls) == 2
+    assert all(c["results"] == 0 for c in feed_calls)

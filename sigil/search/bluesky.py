@@ -11,14 +11,21 @@ than faked.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
+from ..concurrency import prefetch
 from ..config import Config
 from .base import Candidate, ProviderTrace
 from .http import make_session
 
 PUBLIC_API = "https://public.api.bsky.app/xrpc"
 AUTH_API = "https://bsky.social/xrpc"
+
+# One getAuthorFeed round trip per matching account, and they do not depend
+# on each other. Kept modest deliberately: this is an unauthenticated public
+# AppView, and the retry adapter's backoff is the fallback, not the plan.
+FEED_WORKERS = 6
 
 
 def at_uri_to_web_url(uri: str, handle: str) -> str:
@@ -71,11 +78,9 @@ class BlueskyProvider:
                 timeout=self.cfg.http_timeout,
             )
             if r.status_code != 200:
-                self.trace.record(endpoint, params, 0)
                 return None
             return r.json()
-        except Exception:  # noqa: BLE001
-            self.trace.record(endpoint, params, 0)
+        except Exception:  # noqa: BLE001 - every caller records the zero result
             return None
 
     # -- extraction ------------------------------------------------------
@@ -122,37 +127,45 @@ class BlueskyProvider:
         actors = (data or {}).get("actors", [])
         self.trace.record("app.bsky.actor.searchActors", params, len(actors))
 
-        for actor in actors:
-            handle = actor.get("handle", "")
-            did = actor.get("did", "")
-            display = actor.get("displayName", "") or ""
-
-            # A profile avatar is the highest-signal face an account exposes.
-            if actor.get("avatar"):
-                yield Candidate(
-                    platform="bluesky",
-                    image_url=actor["avatar"],
-                    post_url=f"https://bsky.app/profile/{handle}",
-                    post_uri=f"at://{did}/app.bsky.actor.profile/self",
-                    author_handle=handle,
-                    author_did=did,
-                    author_display_name=display,
-                    text=(actor.get("description") or "")[:500],
-                    created_at=actor.get("createdAt", "") or "",
-                    discovered_via="app.bsky.actor.searchActors:avatar",
-                )
-
-            feed_params = {
-                "actor": handle or did,
+        def feed_params(actor: dict) -> dict[str, Any]:
+            return {
+                "actor": actor.get("handle", "") or actor.get("did", ""),
                 "limit": min(self.cfg.posts_per_actor, 100),
                 "filter": "posts_with_media",
             }
-            feed = self._get("app.bsky.feed.getAuthorFeed", feed_params)
-            items = (feed or {}).get("feed", [])
-            self.trace.record("app.bsky.feed.getAuthorFeed", feed_params, len(items))
-            for item in items:
-                post = item.get("post") or {}
-                yield from self._candidates_from_post(post)
+
+        def fetch_feed(actor: dict) -> dict | None:
+            return self._get("app.bsky.feed.getAuthorFeed", feed_params(actor))
+
+        # The feeds are fetched concurrently but consumed in actor order, and
+        # the trace is written here rather than in the workers, so both the
+        # candidate stream and the audit record stay identical to a serial run.
+        with ThreadPoolExecutor(max_workers=FEED_WORKERS) as pool:
+            for actor, feed in prefetch(pool, actors, fetch_feed, FEED_WORKERS * 2):
+                handle = actor.get("handle", "")
+                did = actor.get("did", "")
+                display = actor.get("displayName", "") or ""
+
+                # A profile avatar is the highest-signal face an account exposes.
+                if actor.get("avatar"):
+                    yield Candidate(
+                        platform="bluesky",
+                        image_url=actor["avatar"],
+                        post_url=f"https://bsky.app/profile/{handle}",
+                        post_uri=f"at://{did}/app.bsky.actor.profile/self",
+                        author_handle=handle,
+                        author_did=did,
+                        author_display_name=display,
+                        text=(actor.get("description") or "")[:500],
+                        created_at=actor.get("createdAt", "") or "",
+                        discovered_via="app.bsky.actor.searchActors:avatar",
+                    )
+
+                items = (feed or {}).get("feed", [])
+                self.trace.record("app.bsky.feed.getAuthorFeed", feed_params(actor), len(items))
+                for item in items:
+                    post = item.get("post") or {}
+                    yield from self._candidates_from_post(post)
 
     def _from_post_search(self, query: str) -> Iterator[Candidate]:
         params = {"q": query, "limit": 50}
