@@ -160,6 +160,7 @@ def test_a_gpu_that_loads_but_cannot_infer_falls_back_to_cpu(monkeypatch):
     """Loading a session and running one are separate failure points. A CUDA
     provider can initialise and then fail on the first real call; finding that
     out mid-search means dying part way through a run."""
+    pytest.importorskip("insightface")
     from sigil.face.backends import insight
 
     monkeypatch.setenv("SIGIL_GPU", "1")
