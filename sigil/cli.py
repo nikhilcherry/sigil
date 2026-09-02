@@ -279,6 +279,43 @@ def chain_info(chain_backend):
     console.print(Panel(t, title="Chain", border_style="magenta", expand=False))
 
 
+@chain.command("address")
+@click.option("--chain", "chain_backend", type=click.Choice(["local", "rpc"]), default=None)
+def chain_address(chain_backend):
+    """Show the submitter address and balance, deploying nothing.
+
+    Deliberately separate from `chain info`, which deploys the registry before
+    it can report: on an unfunded key that fails, so there was no way to find
+    out which address to fund without first trying to spend from it.
+    """
+    from rich.panel import Panel
+    from rich.table import Table
+
+    cfg = _cfg(chain_backend=chain_backend)
+    client = ChainClient(cfg)
+
+    t = Table.grid(padding=(0, 2))
+    t.add_column(style="dim", justify="right")
+    t.add_column()
+    t.add_row("backend", cfg.chain_backend)
+    t.add_row("chain id", str(client.chain_id))
+    t.add_row("address", client.address)
+
+    hint = None
+    if cfg.chain_backend == "rpc":
+        wei = client.w3.eth.get_balance(client.address)
+        t.add_row("balance", f"{client.w3.from_wei(wei, 'ether')} (native)")
+        if wei == 0:
+            hint = ("[yellow]unfunded[/yellow] - send testnet funds to the address "
+                    "above, then run [bold]sigil chain info[/bold] to deploy.")
+    else:
+        t.add_row("balance", "[dim]n/a - the local chain pre-funds it[/dim]")
+
+    console.print(Panel(t, title="Chain account", border_style="magenta", expand=False))
+    if hint:
+        console.print(hint)
+
+
 @chain.command("reset")
 @click.confirmation_option(prompt="Delete the local chain state and start over?")
 def chain_reset():

@@ -46,6 +46,11 @@ pipeline, same code path; the CLI and the UI are two front ends over one
 Prefer no heavy model download? `pip install -e ".[dev]"`, run
 `./scripts/fetch_models.sh` (37 MB), and everything works on the OpenCV backend.
 
+The encoder runs on the GPU automatically when onnxruntime has a working CUDA
+provider, and on CPU otherwise. `sigil backends` reports which one actually
+answered — not which one was requested, since an unusable CUDA provider can
+warn and quietly serve CPU.
+
 ### What a run looks like
 
 ```
@@ -215,9 +220,14 @@ cp .env.example .env      # then set:
 #   SIGIL_CHAIN=rpc
 #   SIGIL_RPC_URL=https://polygon-amoy-bor-rpc.publicnode.com
 #   SIGIL_PRIVATE_KEY=0x…        throwaway key, testnet funds only
+sigil chain address              # which address to fund, and whether it is yet
 sigil chain info                 # deploys the registry, prints the address
 sigil run examples/probe-aoc.jpg -q "AOC"
 ```
+
+`chain address` exists because `chain info` deploys before it can report, and
+on an unfunded key that fails — leaving no way to find out which address to
+fund without first trying to spend from it.
 
 Set `SIGIL_CONTRACT` to the printed address afterwards to reuse the deployment.
 Anchoring costs ~114k gas. The run prints a block-explorer link for the
@@ -304,7 +314,8 @@ searches for people by face; it has no business being reachable from off-box.
 | `sigil tamper` | — | produce an altered bundle to prove verification fails |
 | `sigil serve` | 1–5 | local web UI, streaming the run live |
 | `sigil chain info` / `reset` | — | inspect or wipe the chain backend |
-| `sigil backends` | — | report which face backends this machine can load |
+| `sigil chain address` | — | show the submitter address and balance, deploying nothing |
+| `sigil backends` | — | report which backends load, and what they run on |
 
 `sigil run` accepts a local path or an `https://` URL, and exits `0` on a
 verified match, `2` when nothing cleared the threshold, `1` on a failed
