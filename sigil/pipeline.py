@@ -13,7 +13,7 @@ from .chain import ChainClient, Verification
 from .config import Config
 from .evidence import Evidence, MatchRef, ProbeRef, sha256_hex, utc_now
 from .face import Face, decode_image, largest_face, load_encoder
-from .search import BlueskyProvider, SerpApiLensProvider
+from .search import BlueskyProvider, GoogleVisionProvider, SerpApiLensProvider
 from .search.matcher import MatchResult, search_and_match
 
 # Naming a stranger is a higher-stakes call than confirming a match you were
@@ -79,8 +79,18 @@ def scan_probe(image_bytes: bytes, cfg: Config) -> tuple[Face, ProbeRef, Any]:
     return face, ref, encoder
 
 
-def build_providers(cfg: Config, probe_url: str | None) -> list:
+def build_providers(cfg: Config, probe_url: str | None,
+                    probe_bytes: bytes | None = None) -> list:
+    """Assemble the search arms available for this run.
+
+    Bluesky is unconditional: it is the only arm that needs no credentials, so
+    it is what makes a fresh clone perform a real search. The open-web arms are
+    additive - each one widens coverage when its key is present and is skipped
+    rather than faked when it is not.
+    """
     providers: list = [BlueskyProvider(cfg)]
+    if GoogleVisionProvider.available_for(cfg, probe_bytes):
+        providers.append(GoogleVisionProvider(cfg, probe_bytes))
     if SerpApiLensProvider.available_for(cfg, probe_url):
         providers.append(SerpApiLensProvider(cfg, probe_url))
     return providers
@@ -164,7 +174,7 @@ def run_pipeline(
         emit({"type": "query", "query": query, "derived": False, "alternatives": []})
 
     emit({"type": "stage", "stage": "search", "status": "start"})
-    providers = build_providers(cfg, probe_url)
+    providers = build_providers(cfg, probe_url, image_bytes)
     emit({"type": "providers", "providers": [p.name for p in providers]})
     match = search_and_match(
         encoder, face, providers, query, threshold, cfg, on_event=on_event

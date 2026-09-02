@@ -29,7 +29,7 @@ outcome rather than a failure.
 |---|---|---|
 | Face detection + encoding | RetinaFace + ArcFace `w600k_r50`, 512-d; OpenCV YuNet + SFace as a keyless fallback | [`sigil/face/`](sigil/face/) · [§1](#1--face-encoding) |
 | Face → name | local index harvested from Wikipedia pageviews → Wikidata `P31=Q5` → Commons portraits | [`sigil/identify.py`](sigil/identify.py) · [§2](#2--identification--turning-a-face-into-a-name) |
-| Live social search | anonymous AT Protocol (`searchActors`, `getAuthorFeed`); Google Lens via SerpAPI when configured | [`sigil/search/`](sigil/search/) · [§3](#3--web--social-search) |
+| Live social search | anonymous AT Protocol (`searchActors`, `getAuthorFeed`); Google Cloud Vision web detection and Google Lens when configured | [`sigil/search/`](sigil/search/) · [§3](#3--web--social-search) |
 | Blockchain record | keccak256 over a canonical evidence bundle → append-only Solidity registry, on a persisted local py-evm chain or any EVM node | [`contracts/SigilRegistry.sol`](contracts/SigilRegistry.sol) · [§4](#4--blockchain-verification) |
 | Re-verification | recompute the hash and check it against chain state, not against a log | `sigil verify` · [below](#verifying-and-proving-that-verification-bites) |
 
@@ -194,9 +194,22 @@ Supplying `BLUESKY_APP_PASSWORD` additionally unlocks `app.bsky.feed.searchPosts
 (the one endpoint that requires a session), widening the net beyond accounts that
 match by name. Without it that endpoint is skipped rather than faked.
 
-**Google Lens via SerpAPI** is the optional open-web arm. It activates only when
-`SERPAPI_KEY` is set *and* the probe is passed as a public `https://` URL, because
-Lens matches on a URL rather than an upload. With a local file it is skipped.
+**Google Cloud Vision web detection** is the open-web arm, and the one worth
+turning on. Bluesky's coverage is its real limit — a probe of someone who is not
+on the platform finds nothing, which is honest but narrow — and this widens the
+search to the whole indexed web. It activates when `GOOGLE_VISION_API_KEY` is
+set. Unlike Lens it takes the image *bytes*, so a local file works with no
+hosting step, and it returns the page each matching image sits on, which becomes
+the citation in the evidence bundle.
+
+It proposes; it does not decide. Google says "this image appears on these
+pages", and every image it returns is downloaded and run through the same
+encoder as everything else before anything is called a match.
+
+**Google Lens via SerpAPI** is the older open-web arm, kept because it is a
+different index. It activates only when `SERPAPI_KEY` is set *and* the probe is
+passed as a public `https://` URL, because Lens matches on a URL rather than an
+upload. With a local file it is skipped.
 
 Every network call is recorded into the evidence bundle's `search_trace` — the
 endpoints hit, the parameters sent, and the result counts — so a run can be
@@ -421,6 +434,14 @@ on yourself, on a consenting subject, or on a public figure for a demonstration.
   actual bytecode and persists state, but it is single-party: it proves
   integrity against your own record, not against a public consensus. Use
   `SIGIL_CHAIN=rpc` for a record a third party can independently check.
+- **Bluesky's coverage is the practical ceiling on the keyless path.** It is a
+  small, mostly Western platform, so a probe of someone without an account
+  there finds nothing however good the face model is. That is coverage, not
+  accuracy, and it is what the Cloud Vision arm exists to widen. Measured on
+  three probes: a private individual (no account, no match), a public figure
+  with a parked handle and no posts (named correctly from the index, still no
+  match), and one with an active account (named, matched, anchored).
+
 - **Search breadth is bounded by cost, not capability.** `SIGIL_MAX_IMAGES`
   defaults to 200. Raising it widens recall and lengthens runtime roughly
   linearly.

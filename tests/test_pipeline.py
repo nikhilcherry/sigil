@@ -51,7 +51,7 @@ def wired(monkeypatch):
 
     def install(urls):
         provider = StubProvider(urls)
-        monkeypatch.setattr(pipe, "build_providers", lambda cfg, url: [provider])
+        monkeypatch.setattr(pipe, "build_providers", lambda cfg, url, blob=None: [provider])
         return provider
 
     return install

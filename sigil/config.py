@@ -80,6 +80,9 @@ class Config:
         default_factory=lambda: os.getenv("BLUESKY_APP_PASSWORD")
     )
     serpapi_key: str | None = field(default_factory=lambda: os.getenv("SERPAPI_KEY"))
+    google_vision_key: str | None = field(
+        default_factory=lambda: os.getenv("GOOGLE_VISION_API_KEY")
+    )
 
     # --- chain ---
     chain_backend: str = field(default_factory=lambda: os.getenv("SIGIL_CHAIN", "local"))

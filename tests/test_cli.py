@@ -74,7 +74,7 @@ def offline(monkeypatch, tmp_path):
         matcher, "fetch_image",
         lambda s, u, t: EXAMPLE_PROBE.read_bytes() if "same" in u else None,
     )
-    monkeypatch.setattr(pipe, "build_providers", lambda cfg, url: [StubProvider()])
+    monkeypatch.setattr(pipe, "build_providers", lambda cfg, url, blob=None: [StubProvider()])
     monkeypatch.setenv("SIGIL_CHAIN", "local")
     monkeypatch.setenv("SIGIL_SUBJECT_SALT", "test-salt")
     return tmp_path
