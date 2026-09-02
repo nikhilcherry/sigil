@@ -213,3 +213,135 @@ def test_resolve_people_batches_are_split_and_all_merged():
 
     assert len(people) == n
     assert [p.name for p in people] == [f"Name {i}" for i in range(n)]
+
+
+# ----------------------------------------------------------------- build_index
+
+
+def test_build_index_encodes_persists_and_reloads(tmp_path, monkeypatch):
+    """A built index must round-trip: what was encoded is what loads back, in
+    the same order, with the vectors still lined up with the names."""
+    import numpy as np
+
+    from sigil.face import Face
+
+    people = [Identity(f"Person {i}", f"Q{i}", f"https://x/{i}.jpg", "en.wikipedia")
+              for i in range(5)]
+
+    monkeypatch.setattr(idmod, "popular_titles", lambda s, langs, months: {"en": {"t"}})
+    monkeypatch.setattr(idmod, "resolve_people", lambda s, lang, titles: people)
+    monkeypatch.setattr(idmod, "fetch_image", lambda s, url, t: url.encode())
+    monkeypatch.setattr(idmod, "decode_image", lambda blob: blob)
+    monkeypatch.setattr(idmod, "INDEX_VECTORS", tmp_path / "v.npz")
+    monkeypatch.setattr(idmod, "INDEX_META", tmp_path / "m.json")
+    monkeypatch.setattr(idmod, "MODELS_DIR", tmp_path)
+
+    class FakeEncoder:
+        name = "insightface"
+        model = "buffalo_l/w600k_r50"
+
+        def detect_and_encode(self, img):
+            # A distinct unit vector per portrait, keyed off the URL's index.
+            i = int(img.decode().rsplit("/", 1)[-1].split(".")[0])
+            v = np.zeros(5, dtype=np.float32)
+            v[i] = 1.0
+            return [Face(embedding=v, bbox=[0, 0, 10, 10], det_score=0.9)]
+
+    encoder = FakeEncoder()
+    count = idmod.build_index(encoder, langs=["en"], months=1)
+
+    assert count == 5
+    index = IdentityIndex.load(encoder)
+    assert len(index) == 5
+    assert [i.name for i in index.identities] == [f"Person {i}" for i in range(5)]
+    # Vector i must still belong to person i - a reordering here would attach
+    # every name to the wrong face.
+    for i in range(5):
+        hit = index.query(np.eye(5, dtype=np.float32)[i], top=1)[0]
+        assert hit.identity.name == f"Person {i}"
+
+
+def test_build_index_skips_portraits_with_no_usable_face(tmp_path, monkeypatch):
+    """Vectors and identities must stay in lockstep when some portraits drop."""
+    import numpy as np
+
+    from sigil.face import Face
+
+    people = [Identity(f"P{i}", f"Q{i}", f"https://x/{i}.jpg", "en.wikipedia")
+              for i in range(4)]
+
+    monkeypatch.setattr(idmod, "popular_titles", lambda s, langs, months: {"en": {"t"}})
+    monkeypatch.setattr(idmod, "resolve_people", lambda s, lang, titles: people)
+    # Portrait 1 will not download; portrait 2 downloads but has no face.
+    monkeypatch.setattr(idmod, "fetch_image",
+                        lambda s, url, t: None if "/1." in url else url.encode())
+    monkeypatch.setattr(idmod, "decode_image", lambda blob: blob)
+    monkeypatch.setattr(idmod, "INDEX_VECTORS", tmp_path / "v.npz")
+    monkeypatch.setattr(idmod, "INDEX_META", tmp_path / "m.json")
+    monkeypatch.setattr(idmod, "MODELS_DIR", tmp_path)
+
+    class FakeEncoder:
+        name = "insightface"
+        model = "m"
+
+        def detect_and_encode(self, img):
+            if "/2." in img.decode():
+                return []
+            v = np.zeros(4, dtype=np.float32)
+            v[int(img.decode().rsplit("/", 1)[-1].split(".")[0])] = 1.0
+            return [Face(embedding=v, bbox=[0, 0, 10, 10], det_score=0.9)]
+
+    encoder = FakeEncoder()
+    assert idmod.build_index(encoder, langs=["en"], months=1) == 2
+
+    index = IdentityIndex.load(encoder)
+    assert [i.name for i in index.identities] == ["P0", "P3"]
+    assert index.query(np.eye(4, dtype=np.float32)[3], top=1)[0].identity.name == "P3"
+
+
+def test_build_index_refuses_to_write_an_empty_index(tmp_path, monkeypatch):
+    """An index of nothing would load fine and silently name no one."""
+    monkeypatch.setattr(idmod, "popular_titles", lambda s, langs, months: {"en": {"t"}})
+    monkeypatch.setattr(
+        idmod, "resolve_people",
+        lambda s, lang, titles: [Identity("P", "Q", "https://x/0.jpg", "en.wikipedia")],
+    )
+    monkeypatch.setattr(idmod, "fetch_image", lambda s, url, t: None)
+    monkeypatch.setattr(idmod, "INDEX_VECTORS", tmp_path / "v.npz")
+    monkeypatch.setattr(idmod, "MODELS_DIR", tmp_path)
+
+    class FakeEncoder:
+        name = "insightface"
+        model = "m"
+
+        def detect_and_encode(self, img):
+            return []
+
+    with pytest.raises(RuntimeError, match="network"):
+        idmod.build_index(FakeEncoder(), langs=["en"], months=1)
+
+
+def test_build_index_respects_the_limit(tmp_path, monkeypatch):
+    import numpy as np
+
+    from sigil.face import Face
+
+    people = [Identity(f"P{i}", f"Q{i}", f"https://x/{i}.jpg", "en.wikipedia")
+              for i in range(10)]
+    monkeypatch.setattr(idmod, "popular_titles", lambda s, langs, months: {"en": {"t"}})
+    monkeypatch.setattr(idmod, "resolve_people", lambda s, lang, titles: people)
+    monkeypatch.setattr(idmod, "fetch_image", lambda s, url, t: url.encode())
+    monkeypatch.setattr(idmod, "decode_image", lambda blob: blob)
+    monkeypatch.setattr(idmod, "INDEX_VECTORS", tmp_path / "v.npz")
+    monkeypatch.setattr(idmod, "INDEX_META", tmp_path / "m.json")
+    monkeypatch.setattr(idmod, "MODELS_DIR", tmp_path)
+
+    class FakeEncoder:
+        name = "insightface"
+        model = "m"
+
+        def detect_and_encode(self, img):
+            return [Face(embedding=np.ones(3, dtype=np.float32),
+                         bbox=[0, 0, 10, 10], det_score=0.9)]
+
+    assert idmod.build_index(FakeEncoder(), langs=["en"], months=1, limit=3) == 3
