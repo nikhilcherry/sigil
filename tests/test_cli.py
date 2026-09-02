@@ -165,3 +165,33 @@ def test_a_missing_probe_is_a_clean_error_not_a_traceback(offline):
     assert result.exit_code != 0
     assert "not found" in result.output
     assert "Traceback" not in result.output
+
+
+def test_a_chain_failure_is_a_message_not_a_traceback(monkeypatch, tmp_path):
+    """These failures are configuration, not bugs - an unfunded key, an
+    unreachable endpoint, a missing key. Someone following the testnet
+    instructions should be told what to fix, not shown a stack trace."""
+    import sigil.cli as cli_mod
+
+    def explode(cfg):
+        raise RuntimeError("0xabc has no funds on chain 80002. Fund it from a faucet")
+
+    monkeypatch.setattr(cli_mod, "ChainClient", explode)
+
+    for argv in (["chain", "info"], ["chain", "address"]):
+        result = CliRunner().invoke(cli, argv)
+        assert result.exit_code != 0, argv
+        assert "Traceback" not in result.output, argv
+        assert "Fund it from a faucet" in result.output, argv
+
+
+def test_a_missing_rpc_key_is_reported_plainly(monkeypatch):
+    monkeypatch.setenv("SIGIL_CHAIN", "rpc")
+    monkeypatch.setenv("SIGIL_RPC_URL", "https://example.invalid")
+    monkeypatch.delenv("SIGIL_PRIVATE_KEY", raising=False)
+
+    result = CliRunner().invoke(cli, ["chain", "address"])
+
+    assert result.exit_code != 0
+    assert "SIGIL_PRIVATE_KEY is required" in result.output
+    assert "Traceback" not in result.output

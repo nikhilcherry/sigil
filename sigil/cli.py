@@ -7,6 +7,7 @@ while ``sigil run`` executes the full path in one go.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import sys
 from pathlib import Path
@@ -23,6 +24,20 @@ from .pipeline import PipelineError, load_probe_bytes, run_pipeline, scan_probe
 from .report import console
 
 DEFAULT_EVIDENCE = ARTIFACTS_DIR / "evidence.json"
+
+
+@contextlib.contextmanager
+def _chain_errors():
+    """Report a chain problem as a message, not a traceback.
+
+    The failures here are configuration, not bugs: an unfunded key, an
+    unreachable RPC endpoint, a missing private key. Someone following the
+    testnet instructions in the README should be told what to fix.
+    """
+    try:
+        yield
+    except RuntimeError as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
 def _cfg(**overrides) -> Config:
@@ -102,7 +117,7 @@ def run(image, query, backend, threshold, max_images, chain_backend, no_anchor, 
         try:
             result = run_pipeline(image, query, cfg, do_anchor=not no_anchor,
                                   on_event=on_event)
-        except PipelineError as exc:
+        except (PipelineError, RuntimeError) as exc:
             progress.stop()
             raise click.ClickException(str(exc)) from exc
 
@@ -178,9 +193,12 @@ def anchor(evidence_path, chain_backend):
     """Stage 4 only: write an existing evidence bundle to the chain."""
     cfg = _cfg(chain_backend=chain_backend)
     ev = _load_evidence(evidence_path)
-    client = ChainClient(cfg)
-    console.print(f"[dim]contract {client.ensure_deployed()} on chain {client.chain_id}[/dim]")
-    report.anchor_panel(client.anchor(ev))
+    with _chain_errors():
+        client = ChainClient(cfg)
+        console.print(
+            f"[dim]contract {client.ensure_deployed()} on chain {client.chain_id}[/dim]"
+        )
+        report.anchor_panel(client.anchor(ev))
 
 
 # ------------------------------------------------------------------------ verify
@@ -198,7 +216,8 @@ def verify(evidence_path, chain_backend, probe, recheck_source):
     """Stage 5: recompute the hash locally and check it against chain state."""
     cfg = _cfg(chain_backend=chain_backend)
     ev = _load_evidence(evidence_path)
-    client = ChainClient(cfg)
+    with _chain_errors():
+        client = ChainClient(cfg)
 
     probe_digest = None
     if probe:
@@ -259,8 +278,9 @@ def chain() -> None:
 def chain_info(chain_backend):
     """Show the connected chain, the deployed contract and the record count."""
     cfg = _cfg(chain_backend=chain_backend)
-    client = ChainClient(cfg)
-    addr = client.ensure_deployed()
+    with _chain_errors():
+        client = ChainClient(cfg)
+        addr = client.ensure_deployed()
     from rich.table import Table
 
     t = Table.grid(padding=(0, 2))
@@ -292,7 +312,8 @@ def chain_address(chain_backend):
     from rich.table import Table
 
     cfg = _cfg(chain_backend=chain_backend)
-    client = ChainClient(cfg)
+    with _chain_errors():
+        client = ChainClient(cfg)
 
     t = Table.grid(padding=(0, 2))
     t.add_column(style="dim", justify="right")
