@@ -24,7 +24,7 @@ from .http import fetch_image, make_session
 DOWNLOAD_WORKERS = 8
 # How many downloads may be in flight (or finished and waiting) ahead of the
 # encoder. Larger than the worker count on purpose: it is the read-ahead buffer
-# that keeps every worker busy while the main thread is inside ONNX.
+# that keeps the encoder from ever waiting on the network.
 PREFETCH = DOWNLOAD_WORKERS * 3
 
 
@@ -102,10 +102,12 @@ def search_and_match(
     def fetch(c: Candidate) -> bytes | None:
         return fetch_image(session, c.image_url, cfg.http_timeout)
 
-    # Network in parallel, inference serially: the downloads are the slow part,
-    # and keeping one thread on the ONNX session avoids fighting onnxruntime's
-    # own intra-op threading. The prefetch window is what makes the two
-    # overlap instead of alternate.
+    # Network in parallel, inference serially. Inference is the expensive half
+    # by a wide margin - a default run spends a couple of minutes in ONNX
+    # against a few seconds of download across eight workers - and onnxruntime
+    # already saturates the cores from inside, so a parallel outer loop would
+    # only fight its intra-op threading. The read-ahead window exists to keep
+    # that single encoder fed rather than to make downloading faster.
     with ThreadPoolExecutor(max_workers=DOWNLOAD_WORKERS) as pool:
         for cand, blob in prefetch(pool, stream, fetch, PREFETCH):
             if not blob:
