@@ -244,19 +244,24 @@ class Handler(BaseHTTPRequestHandler):
         self.close_connection = True
         self.end_headers()
 
-        while True:
-            try:
-                event = job.events.get(timeout=30)
-            except queue.Empty:
-                # A comment frame keeps proxies and impatient clients from
-                # dropping a stream during a long search.
-                self._write_raw(b": keepalive\n\n")
-                continue
-            if event is SENTINEL:
-                self._write_raw(b"event: end\ndata: {}\n\n")
-                break
-            self._write_raw(f"data: {json.dumps(event)}\n\n".encode())
-        JOBS.pop(job_id, None)
+        try:
+            while True:
+                try:
+                    event = job.events.get(timeout=30)
+                except queue.Empty:
+                    # A comment frame keeps proxies and impatient clients from
+                    # dropping a stream during a long search.
+                    self._write_raw(b": keepalive\n\n")
+                    continue
+                if event is SENTINEL:
+                    self._write_raw(b"event: end\ndata: {}\n\n")
+                    break
+                self._write_raw(f"data: {json.dumps(event)}\n\n".encode())
+        finally:
+            # In a finally because a viewer navigating away mid-stream raises
+            # out of _write_raw. Without this the job, and every event still
+            # queued on it, would be retained for the life of the process.
+            JOBS.pop(job_id, None)
 
     def _write_raw(self, data: bytes) -> None:
         try:

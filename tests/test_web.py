@@ -227,3 +227,29 @@ def test_a_bad_max_images_is_also_reported_rather_than_hanging(app):
     frames = _read_stream(f"{app}/api/stream?job={body['job']}", limit=40)
 
     assert any(f.startswith("event: end") for f in frames), "the stream never ended"
+
+
+@pytest.mark.filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")
+def test_a_viewer_who_navigates_away_does_not_leak_the_job(app):
+    """Closing the tab mid-stream raises out of the write. The job and every
+    event still queued on it must not be retained for the life of the process.
+
+    The handler ends its thread with SystemExit, which threading.excepthook
+    ignores by design - so nothing is printed in production. Only pytest's
+    thread-exception hook notices, hence the filter.
+    """
+    job = web.Job()
+    web.JOBS[job.id] = job
+    for i in range(2000):
+        job.emit({"type": "progress", "examined": i})
+
+    # Read a little, then hang up without waiting for the end event.
+    r = urllib.request.urlopen(f"{app}/api/stream?job={job.id}", timeout=30)
+    for _ in range(3):
+        r.readline()
+    r.close()
+
+    deadline = time.monotonic() + 15
+    while job.id in web.JOBS and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert job.id not in web.JOBS, "the abandoned job was never dropped"
