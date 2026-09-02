@@ -580,3 +580,22 @@ def test_malformed_lens_json_yields_nothing_rather_than_raising(monkeypatch):
     provider, _ = _serp(monkeypatch, ValueError("not json"))
 
     assert list(provider.candidates("q")) == []
+
+
+def test_reused_verdicts_are_not_counted_as_faces_compared(monkeypatch):
+    """The report calls this "faces compared". A reused verdict compared
+    nothing, and this project's traces are meant to be literally true."""
+    import sigil.search.matcher as m
+
+    monkeypatch.setattr(m, "fetch_image", lambda s, u, t: b"same-bytes")
+    monkeypatch.setattr(m, "score_image", lambda e, p, b: (0.9, 2, [0, 0, 5, 5]))
+
+    provider = FakeProvider([_candidate(f"https://cdn/a?w={i}") for i in range(4)])
+    result = search_and_match(
+        FakeEncoder({}), _face([1, 0, 0]), [provider], "q", 0.38, Config()
+    )
+
+    assert result.images_examined == 4
+    assert result.inference_reused == 3
+    assert result.faces_examined == 2, "counted faces it never compared"
+    assert result.images_with_faces == 4

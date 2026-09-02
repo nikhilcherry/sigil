@@ -125,7 +125,10 @@ def search_and_match(
             else:
                 sim, n_faces, bbox = score_image(encoder, probe, blob)
                 by_digest[digest] = (sim, n_faces, bbox)
-            result.faces_examined += n_faces
+                # Counted only where a comparison actually happened - the
+                # report calls this "faces compared", and a reused verdict
+                # compared nothing.
+                result.faces_examined += n_faces
             if n_faces:
                 result.images_with_faces += 1
             if sim < 0:
