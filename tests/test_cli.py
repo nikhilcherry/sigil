@@ -195,3 +195,70 @@ def test_a_missing_rpc_key_is_reported_plainly(monkeypatch):
     assert result.exit_code != 0
     assert "SIGIL_PRIVATE_KEY is required" in result.output
     assert "Traceback" not in result.output
+
+
+def test_chain_reset_removes_state_and_says_so(offline, monkeypatch):
+    """demo.sh opens with this, so a recording starts from a known chain."""
+    import sigil.config as config_mod
+
+    state = offline / "chain-state.json"
+    state.write_text("{}")
+    monkeypatch.setattr(config_mod, "STATE_PATH", state)
+
+    result = CliRunner().invoke(cli, ["chain", "reset", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    assert not state.exists()
+    assert "removed" in result.output
+
+
+def test_chain_reset_on_a_clean_slate_is_not_an_error(offline, monkeypatch):
+    import sigil.config as config_mod
+
+    monkeypatch.setattr(config_mod, "STATE_PATH", offline / "absent.json")
+
+    result = CliRunner().invoke(cli, ["chain", "reset", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    assert "no local chain state" in result.output
+
+
+def test_identify_without_an_index_says_how_to_build_one(offline, monkeypatch):
+    """demo.sh runs this before any index exists on a fresh clone."""
+    import sigil.identify as idmod
+
+    monkeypatch.setattr(idmod, "INDEX_VECTORS", offline / "none.npz")
+    monkeypatch.setattr(idmod, "INDEX_META", offline / "none.json")
+
+    result = CliRunner().invoke(cli, ["identify", str(EXAMPLE_PROBE)])
+
+    assert result.exit_code != 0
+    assert "sigil index build" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_identify_names_a_face_from_the_index(offline, monkeypatch):
+    """The naming step on its own, as the demo shows it before the full run."""
+    import numpy as np
+
+    import sigil.identify as idmod
+    from sigil.config import Config
+    from sigil.pipeline import scan_probe
+
+    face, _, encoder = scan_probe(EXAMPLE_PROBE.read_bytes(), Config())
+    vec = np.asarray(face.embedding, dtype=np.float32).reshape(1, -1)
+
+    vec_path, meta_path = offline / "v.npz", offline / "m.json"
+    np.savez_compressed(vec_path, vectors=vec)
+    meta_path.write_text(json.dumps({
+        "backend": encoder.name, "model": encoder.model, "count": 1,
+        "identities": [{"name": "A Known Person", "qid": "Q1",
+                        "image_url": "https://x/p.jpg", "source": "en.wikipedia"}],
+    }))
+    monkeypatch.setattr(idmod, "INDEX_VECTORS", vec_path)
+    monkeypatch.setattr(idmod, "INDEX_META", meta_path)
+
+    result = CliRunner().invoke(cli, ["identify", str(EXAMPLE_PROBE)])
+
+    assert result.exit_code == 0, result.output
+    assert "A Known Person" in result.output
