@@ -96,3 +96,70 @@ def test_optional_checks_that_did_not_run_do_not_count_as_passes(client, evidenc
     assert v.probe_matches is None
     assert v.source_image_intact is None
     assert v.ok is True
+
+
+# ------------------------------------------------------- the rpc funding path
+
+
+class _FakeFn:
+    def build_transaction(self, tx):
+        return dict(tx)
+
+
+class _FakeEth:
+    """Just enough of w3.eth for _send to get as far as pricing the transaction."""
+
+    chain_id = 80002
+
+    def __init__(self, error):
+        self.error = error
+
+    def get_transaction_count(self, address):
+        return 0
+
+    def estimate_gas(self, tx):
+        raise self.error
+
+
+def _rpc_client(cfg, monkeypatch, error):
+    client = ChainClient(cfg)
+    monkeypatch.setattr(client, "backend", "rpc")
+    monkeypatch.setattr(client, "account", "0x" + "a" * 40)
+    monkeypatch.setattr(client.w3, "eth", _FakeEth(error))
+    return client
+
+
+def test_an_unfunded_key_gets_the_instruction_that_fixes_it(cfg, monkeypatch):
+    """Most nodes refuse to price a transaction the sender cannot pay for, so
+    the failure lands at gas estimation rather than at send - where a raw web3
+    error tells nobody what to do about it."""
+    client = _rpc_client(cfg, monkeypatch, ValueError(
+        "err: insufficient funds for gas * price + value: have 0 want 12345"
+    ))
+
+    with pytest.raises(RuntimeError) as exc:
+        client._send(_FakeFn())
+
+    assert "faucet" in str(exc.value)
+    assert "sigil chain address" in str(exc.value)
+
+
+def test_a_gas_requirement_failure_is_also_a_funding_problem(cfg, monkeypatch):
+    """Some nodes phrase the same condition as a gas requirement instead."""
+    client = _rpc_client(cfg, monkeypatch, ValueError(
+        "gas required exceeds allowance (0)"
+    ))
+
+    with pytest.raises(RuntimeError, match="faucet"):
+        client._send(_FakeFn())
+
+
+def test_an_unrelated_rpc_error_is_not_disguised_as_a_funding_problem(cfg, monkeypatch):
+    """Swallowing every failure into "go find a faucet" would send someone
+    chasing the wrong thing."""
+    client = _rpc_client(cfg, monkeypatch, ValueError(
+        "execution reverted: already anchored"
+    ))
+
+    with pytest.raises(ValueError, match="already anchored"):
+        client._send(_FakeFn())
