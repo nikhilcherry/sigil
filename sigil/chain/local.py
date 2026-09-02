@@ -33,11 +33,18 @@ class PersistentLocalChain:
     def _load(self) -> None:
         if not self.state_path.exists():
             return
+        # An unreadable snapshot starts the chain from genesis rather than
+        # refusing to run. Decoding is inside the try for the same reason the
+        # read is: a truncated or hand-edited file fails on malformed hex or a
+        # non-mapping just as easily as on bad JSON, and neither is worth a
+        # traceback. `sigil chain info` reports the record count, so an empty
+        # chain is visible rather than silent.
         try:
             blob = json.loads(self.state_path.read_text())
-        except (json.JSONDecodeError, OSError):
+            kv = {bytes.fromhex(k): bytes.fromhex(v)
+                  for k, v in blob.get("kv", {}).items()}
+        except (json.JSONDecodeError, OSError, ValueError, AttributeError):
             return
-        kv = {bytes.fromhex(k): bytes.fromhex(v) for k, v in blob.get("kv", {}).items()}
         if not kv:
             return
         store = self._kv()

@@ -276,3 +276,65 @@ def test_an_unreachable_endpoint_names_the_endpoint(cfg, monkeypatch):
 
     with pytest.raises(RuntimeError, match="node.example"):
         ChainClient(cfg)
+
+
+# ------------------------------------------------------- local chain durability
+
+
+def test_state_written_by_one_chain_is_read_back_by_another(tmp_path):
+    """The claim that makes `anchor` and `verify` meaningful as separate
+    commands: a second process reads chain state, not a replayed log."""
+    from sigil.chain.local import PersistentLocalChain
+
+    path = tmp_path / "chain-state.json"
+    first = PersistentLocalChain(path)
+    first.meta["contract"] = "0x" + "ab" * 20
+    first.save()
+
+    second = PersistentLocalChain(path)
+
+    assert second.meta["contract"] == "0x" + "ab" * 20
+    assert second._kv(), "the key/value store came back empty"
+
+
+def test_a_corrupt_state_file_starts_fresh_instead_of_crashing(tmp_path):
+    """The file is a cache of chain state. Refusing to run because it is
+    unreadable is a worse outcome than starting from genesis."""
+    from sigil.chain.local import PersistentLocalChain
+
+    for bad in ('not json at all',
+                json.dumps({"meta": {}, "kv": {"zznothex": "00"}}),
+                json.dumps({"meta": {}, "kv": "not a mapping"}),
+                json.dumps([])):
+        path = tmp_path / "chain-state.json"
+        path.write_text(bad)
+        chain = PersistentLocalChain(path)
+        assert chain.meta == {}, bad[:20]
+
+
+def test_saving_is_atomic_and_leaves_no_partial_file(tmp_path):
+    """A crash mid-write must not be able to corrupt the state that exists."""
+    from sigil.chain.local import PersistentLocalChain
+
+    path = tmp_path / "chain-state.json"
+    chain = PersistentLocalChain(path)
+    chain.save()
+
+    assert path.exists()
+    assert not list(tmp_path.glob("*.tmp")), "a temporary file was left behind"
+    json.loads(path.read_text())
+
+
+def test_reset_wipes_the_persisted_state(tmp_path):
+    from sigil.chain.local import PersistentLocalChain
+
+    path = tmp_path / "chain-state.json"
+    chain = PersistentLocalChain(path)
+    chain.meta["contract"] = "0xdead"
+    chain.save()
+
+    chain.reset()
+
+    assert not path.exists()
+    assert chain.meta == {}
+    assert PersistentLocalChain(path).meta == {}
