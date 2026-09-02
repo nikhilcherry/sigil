@@ -117,12 +117,23 @@ def test_verify_endpoint_confirms_an_anchored_bundle(app, evidence, cfg):
     assert body["probe_matches"] is True
 
 
-def _read_stream(url, limit=10):
-    """Collect SSE frames until the end event or `limit` frames."""
+def _read_stream(url, limit=10, deadline=90):
+    """Collect SSE frames until the end event, `limit` frames, or the deadline.
+
+    The deadline is the point. A stream that never terminates is precisely the
+    failure being guarded against, and the server sends a keepalive comment
+    every 30s - so without a wall-clock bound a regression would hang the suite
+    instead of failing it.
+    """
     frames = []
+    started = time.monotonic()
     with urllib.request.urlopen(url, timeout=30) as r:
         assert r.headers["Content-Type"] == "text/event-stream"
         for raw in r:
+            if time.monotonic() - started > deadline:
+                raise AssertionError(
+                    f"stream did not end within {deadline}s; got {len(frames)} frames"
+                )
             line = raw.decode().rstrip("\n")
             if not line:
                 continue
@@ -176,3 +187,43 @@ def test_the_stream_closes_the_connection_rather_than_keeping_it_alive(app):
     with urllib.request.urlopen(f"{app}/api/stream?job={job.id}", timeout=30) as r:
         assert r.headers["Connection"] == "close"
         assert r.headers.get("Content-Length") is None
+
+
+def test_a_bad_option_ends_the_stream_with_an_error_not_a_hang(app, monkeypatch):
+    """The page drives everything off this stream, so anything that escapes the
+    job function does not show as an error - it leaves the UI on a spinner
+    forever. Config() itself can raise, since a malformed threshold is refused
+    rather than defaulted."""
+    import base64
+
+    from tests.conftest import EXAMPLE_PROBE
+
+    status, body = post(f"{app}/api/run", {
+        "image_b64": base64.b64encode(EXAMPLE_PROBE.read_bytes()).decode(),
+        "query": "someone",
+        "threshold": "not-a-number",
+    })
+    assert status == 200, body
+
+    frames = _read_stream(f"{app}/api/stream?job={body['job']}", limit=40)
+
+    assert any(f.startswith("event: end") for f in frames), "the stream never ended"
+    errors = [json.loads(f[len("data: "):]) for f in frames if f.startswith("data: ")]
+    assert any(e.get("type") == "error" for e in errors), errors
+
+
+def test_a_bad_max_images_is_also_reported_rather_than_hanging(app):
+    import base64
+
+    from tests.conftest import EXAMPLE_PROBE
+
+    status, body = post(f"{app}/api/run", {
+        "image_b64": base64.b64encode(EXAMPLE_PROBE.read_bytes()).decode(),
+        "query": "someone",
+        "max_images": "twenty",
+    })
+    assert status == 200, body
+
+    frames = _read_stream(f"{app}/api/stream?job={body['job']}", limit=40)
+
+    assert any(f.startswith("event: end") for f in frames), "the stream never ended"

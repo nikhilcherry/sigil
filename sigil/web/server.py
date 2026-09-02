@@ -58,16 +58,22 @@ JOBS: dict[str, Job] = {}
 
 
 def _run_job(job: Job, probe_path: Path, query: str, opts: dict[str, Any]) -> None:
-    cfg = Config()
-    for key in ("face_backend", "chain_backend"):
-        if opts.get(key):
-            setattr(cfg, key, opts[key])
-    if opts.get("max_images"):
-        cfg.max_images = int(opts["max_images"])
-    if opts.get("threshold"):
-        cfg.threshold = float(opts["threshold"])
-
+    # Everything is inside the try, including building the config. The browser
+    # drives the whole UI off this job's event stream and the stream only ends
+    # when finish() runs in the finally - so anything that escapes this
+    # function does not surface as an error, it hangs the page on a spinner.
+    # Config() itself can raise: a malformed SIGIL_THRESHOLD is refused rather
+    # than defaulted, and the options below come straight from the request.
     try:
+        cfg = Config()
+        for key in ("face_backend", "chain_backend"):
+            if opts.get(key):
+                setattr(cfg, key, opts[key])
+        if opts.get("max_images"):
+            cfg.max_images = int(opts["max_images"])
+        if opts.get("threshold"):
+            cfg.threshold = float(opts["threshold"])
+
         result = run_pipeline(str(probe_path), query, cfg, do_anchor=True,
                               on_event=job.emit)
         if result.evidence is not None:
