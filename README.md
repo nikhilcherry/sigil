@@ -331,7 +331,7 @@ verifying against new probes — pick one and keep it).
 ## Tests
 
 ```bash
-pytest -m "not network"   # 145 offline tests, 87% line coverage
+pytest -m "not network"   # 152 offline tests, 88% line coverage
 pytest -m network         # 3 tests against the live API and a live chain
 ```
 
