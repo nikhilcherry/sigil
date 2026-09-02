@@ -225,7 +225,9 @@ def verify(evidence_path, chain_backend, probe, recheck_source):
         _, ref, _ = scan_probe(image_bytes, cfg)
         probe_digest = ref.embedding_sha256
 
-    v = client.verify(ev, probe_embedding_sha256=probe_digest, recheck_source=recheck_source)
+    with _chain_errors():
+        v = client.verify(ev, probe_embedding_sha256=probe_digest,
+                          recheck_source=recheck_source)
     report.verification_panel(v, title=f"Verification of {evidence_path.name}")
     sys.exit(0 if v.ok else 1)
 
