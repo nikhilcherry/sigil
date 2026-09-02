@@ -9,8 +9,9 @@ and the face model is the judge.
 from __future__ import annotations
 
 import itertools
+from collections import deque
 from collections.abc import Callable, Iterable, Iterator
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -21,7 +22,10 @@ from .base import Candidate
 from .http import fetch_image, make_session
 
 DOWNLOAD_WORKERS = 8
-BATCH = 16
+# How many downloads may be in flight (or finished and waiting) ahead of the
+# encoder. Larger than the worker count on purpose: it is the read-ahead buffer
+# that keeps every worker busy while the main thread is inside ONNX.
+PREFETCH = DOWNLOAD_WORKERS * 3
 
 
 @dataclass
@@ -41,15 +45,11 @@ class MatchResult:
     images_examined: int = 0
     images_with_faces: int = 0
     faces_examined: int = 0
+    inference_reused: int = 0
 
     @property
     def found(self) -> bool:
         return self.best is not None
-
-
-def _batched(it: Iterator[Candidate], n: int) -> Iterator[list[Candidate]]:
-    while chunk := list(itertools.islice(it, n)):
-        yield chunk
 
 
 def _dedup(it: Iterable[Candidate]) -> Iterator[Candidate]:
@@ -77,6 +77,31 @@ def score_image(encoder, probe: Face, image_bytes: bytes) -> tuple[float, int, l
     return best_sim, len(faces), best_box
 
 
+def _prefetch(
+    pool: ThreadPoolExecutor,
+    stream: Iterator[Candidate],
+    fetch: Callable[[Candidate], bytes | None],
+    window: int,
+) -> Iterator[tuple[Candidate, bytes | None]]:
+    """Download ahead of the consumer, yielding in submission order.
+
+    The encoder is single-threaded by design (see below), so a batch-synchronous
+    download-then-encode loop leaves every network worker idle for the whole
+    inference phase and vice versa. Keeping a fixed window of futures in flight
+    overlaps the two instead, and popping from the left preserves candidate
+    order so a run stays reproducible.
+    """
+    pending: deque[tuple[Candidate, Future[bytes | None]]] = deque()
+    for cand in stream:
+        pending.append((cand, pool.submit(fetch, cand)))
+        if len(pending) >= window:
+            done_cand, fut = pending.popleft()
+            yield done_cand, fut.result()
+    while pending:
+        done_cand, fut = pending.popleft()
+        yield done_cand, fut.result()
+
+
 def search_and_match(
     encoder,
     probe: Face,
@@ -89,57 +114,71 @@ def search_and_match(
     session = make_session()
     result = MatchResult(best=None)
     scored: list[ScoredCandidate] = []
+    # digest -> (similarity, faces_in_image, bbox). One image is routinely
+    # served under several URLs (CDN size variants, cache-busting query
+    # strings), and URL dedup cannot see that.
+    by_digest: dict[str, tuple[float, int, list[int]]] = {}
 
     stream = _dedup(
         itertools.chain.from_iterable(p.candidates(query) for p in providers)
     )
     stream = itertools.islice(stream, cfg.max_images)
 
+    def fetch(c: Candidate) -> bytes | None:
+        return fetch_image(session, c.image_url, cfg.http_timeout)
+
+    # Network in parallel, inference serially: the downloads are the slow part,
+    # and keeping one thread on the ONNX session avoids fighting onnxruntime's
+    # own intra-op threading.
     with ThreadPoolExecutor(max_workers=DOWNLOAD_WORKERS) as pool:
-        for chunk in _batched(stream, BATCH):
-            # Network in parallel, inference serially: the downloads are the
-            # slow part, and keeping one thread on the ONNX session avoids
-            # fighting onnxruntime's own intra-op threading.
-            blobs = list(
-                pool.map(lambda c: fetch_image(session, c.image_url, cfg.http_timeout), chunk)
-            )
-            for cand, blob in zip(chunk, blobs, strict=True):
-                if not blob:
-                    continue
-                result.images_examined += 1
+        for cand, blob in _prefetch(pool, stream, fetch, PREFETCH):
+            if not blob:
+                continue
+            result.images_examined += 1
+            # Reuse the score rather than dropping the candidate: identical
+            # bytes give an identical verdict, but the *posts* differ, and the
+            # post is what gets anchored. Hashing is microseconds; a redundant
+            # detect+encode is not.
+            digest = sha256_hex(blob)
+            cached = by_digest.get(digest)
+            if cached is not None:
+                result.inference_reused += 1
+                sim, n_faces, bbox = cached
+            else:
                 sim, n_faces, bbox = score_image(encoder, probe, blob)
-                result.faces_examined += n_faces
-                if n_faces:
-                    result.images_with_faces += 1
-                if sim < 0:
-                    continue
-                scored.append(
-                    ScoredCandidate(
-                        candidate=cand,
-                        similarity=sim,
-                        image_sha256=sha256_hex(blob),
-                        faces_in_image=n_faces,
-                        matched_bbox=bbox,
-                    )
+                by_digest[digest] = (sim, n_faces, bbox)
+            result.faces_examined += n_faces
+            if n_faces:
+                result.images_with_faces += 1
+            if sim < 0:
+                continue
+            scored.append(
+                ScoredCandidate(
+                    candidate=cand,
+                    similarity=sim,
+                    image_sha256=digest,
+                    faces_in_image=n_faces,
+                    matched_bbox=bbox,
                 )
-                if on_event:
-                    on_event({
-                        "type": "candidate",
-                        "similarity": round(sim, 4),
-                        "handle": cand.author_handle,
-                        "display": cand.author_display_name,
-                        "image_url": cand.image_url,
-                        "post_url": cand.post_url,
-                        "via": cand.discovered_via,
-                        "faces": n_faces,
-                        "hit": sim >= threshold,
-                    })
-                    on_event({
-                        "type": "progress",
-                        "examined": result.images_examined,
-                        "scored": len(scored),
-                        "top": round(max((s.similarity for s in scored), default=0.0), 4),
-                    })
+            )
+            if on_event:
+                on_event({
+                    "type": "candidate",
+                    "similarity": round(sim, 4),
+                    "handle": cand.author_handle,
+                    "display": cand.author_display_name,
+                    "image_url": cand.image_url,
+                    "post_url": cand.post_url,
+                    "via": cand.discovered_via,
+                    "faces": n_faces,
+                    "hit": sim >= threshold,
+                })
+                on_event({
+                    "type": "progress",
+                    "examined": result.images_examined,
+                    "scored": len(scored),
+                    "top": round(max((s.similarity for s in scored), default=0.0), 4),
+                })
 
     scored.sort(key=lambda s: s.similarity, reverse=True)
     result.ranked = scored[:20]

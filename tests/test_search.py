@@ -170,3 +170,100 @@ def test_the_trace_records_what_was_actually_queried(monkeypatch):
         {"provider": "fake", "calls": [{"endpoint": "fake.search",
                                         "params": {"q": "who"}, "results": 1}]}
     ]
+
+
+def test_identical_bytes_reuse_the_score_without_dropping_the_post(monkeypatch):
+    """One image served under several URLs must not cost several inferences.
+
+    It must also not collapse the candidates: the verdict is identical, but the
+    *posts* differ, and the post is what ends up anchored.
+    """
+    import sigil.search.matcher as m
+
+    calls = []
+
+    def score(encoder, probe, blob):
+        calls.append(blob)
+        return 0.9, 1, [0, 0, 5, 5]
+
+    monkeypatch.setattr(m, "fetch_image", lambda s, u, t: b"same-bytes")
+    monkeypatch.setattr(m, "score_image", score)
+
+    urls = ["https://cdn/a?w=1", "https://cdn/a?w=2", "https://cdn/a?w=3"]
+    provider = FakeProvider([_candidate(u, handle=f"h{i}") for i, u in enumerate(urls)])
+    result = search_and_match(
+        FakeEncoder({}), _face([1, 0, 0]), [provider], "q", 0.38, Config()
+    )
+
+    assert len(calls) == 1, "the same bytes were encoded more than once"
+    assert result.inference_reused == 2
+    assert result.images_examined == 3
+    assert [s.candidate.author_handle for s in result.ranked] == ["h0", "h1", "h2"]
+
+
+def test_downloads_keep_running_while_the_encoder_works(monkeypatch):
+    """Network and inference must overlap, not alternate.
+
+    A batch-synchronous loop leaves every download worker idle for the whole
+    inference phase. The property that distinguishes the two designs is not
+    wall-clock time - it is whether a fetch ever *starts* while a score is in
+    flight.
+    """
+    import threading
+    import time
+
+    import sigil.search.matcher as m
+
+    scoring = threading.Event()
+    overlapped = threading.Event()
+
+    def fetch(session, url, timeout):
+        if scoring.is_set():
+            overlapped.set()
+        time.sleep(0.01)
+        return url.encode()
+
+    def score(encoder, probe, blob):
+        scoring.set()
+        time.sleep(0.02)
+        scoring.clear()
+        return 0.1, 1, []
+
+    monkeypatch.setattr(m, "fetch_image", fetch)
+    monkeypatch.setattr(m, "score_image", score)
+
+    cfg = Config()
+    cfg.max_images = m.PREFETCH * 2
+    provider = FakeProvider([_candidate(f"https://{i}") for i in range(cfg.max_images)])
+    search_and_match(FakeEncoder({}), _face([1, 0, 0]), [provider], "q", 0.38, cfg)
+
+    assert overlapped.is_set(), "no download overlapped with inference"
+
+
+def test_prefetch_preserves_candidate_order(monkeypatch):
+    """Downloads finish out of order; results must not.
+
+    Ranking sorts by similarity, but ties break on arrival order, so a run that
+    reordered its candidates would not be reproducible.
+    """
+    import random
+    import time
+
+    import sigil.search.matcher as m
+
+    def fetch(session, url, timeout):
+        time.sleep(random.uniform(0, 0.01))
+        return url.encode()
+
+    monkeypatch.setattr(m, "fetch_image", fetch)
+    monkeypatch.setattr(m, "score_image", lambda e, p, b: (0.5, 1, []))
+
+    cfg = Config()
+    cfg.max_images = 40
+    urls = [f"https://{i}" for i in range(cfg.max_images)]
+    provider = FakeProvider([_candidate(u) for u in urls])
+    result = search_and_match(
+        FakeEncoder({}), _face([1, 0, 0]), [provider], "q", 0.38, cfg
+    )
+
+    assert [s.candidate.image_url for s in result.ranked] == urls[:20]

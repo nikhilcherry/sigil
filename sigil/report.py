@@ -41,6 +41,8 @@ def search_panel(result, threshold: float, providers: list[str]) -> None:
     t.add_row("images fetched", str(result.images_examined))
     t.add_row("images with a face", str(result.images_with_faces))
     t.add_row("faces compared", str(result.faces_examined))
+    if getattr(result, "inference_reused", 0):
+        t.add_row("duplicate images", f"{result.inference_reused} (score reused)")
     t.add_row("threshold", f"{threshold:.3f} cosine")
     calls = sum(len(p["calls"]) for p in result.trace)
     t.add_row("live API calls", str(calls))
