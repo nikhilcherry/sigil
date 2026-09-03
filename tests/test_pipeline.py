@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 from sigil.chain import ChainClient
+from sigil.config import Config
 from sigil.pipeline import PipelineError, run_pipeline
 from sigil.search.base import Candidate, ProviderTrace
 from tests.conftest import EXAMPLE_CONTROL, EXAMPLE_PROBE
@@ -176,3 +177,86 @@ def test_the_probe_is_encoded_a_second_time_to_verify_rather_than_echoed(
     assert len(seen) == 2, f"the probe was encoded {len(seen)} time(s), not twice"
     assert seen[0] == seen[1], "encoding one probe twice gave two different answers"
     assert result.verification.probe_matches is True
+
+
+# ------------------------------------------------ where the probe comes from
+
+
+def test_a_probe_can_be_an_https_url_not_only_a_path(monkeypatch):
+    """A documented capability of `sigil run`, and the reason probe_url exists.
+
+    The Lens arm matches on a URL rather than an upload, so it can only run at
+    all when the probe arrived as one. That makes this path load-bearing rather
+    than a convenience.
+    """
+    import sigil.pipeline as pipe
+
+    blob = EXAMPLE_PROBE.read_bytes()
+
+    class Response:
+        content = blob
+        raise_for_status = staticmethod(lambda: None)
+
+    got = {}
+
+    def fake_get(url, timeout=None, headers=None):
+        got["url"] = url
+        got["headers"] = headers
+        return Response()
+
+    monkeypatch.setattr(pipe.requests, "get", fake_get)
+    data, url = pipe.load_probe_bytes("https://example.com/face.jpg", Config())
+
+    assert data == blob
+    # The URL is handed back so the Lens arm can be offered the same address.
+    assert url == "https://example.com/face.jpg"
+    assert got["url"] == "https://example.com/face.jpg"
+    assert got["headers"] == {"User-Agent": "sigil"}
+
+
+def test_a_local_path_reports_no_public_url(monkeypatch):
+    """The contrast that makes the returned URL meaningful."""
+    import sigil.pipeline as pipe
+
+    data, url = pipe.load_probe_bytes(str(EXAMPLE_PROBE), Config())
+    assert data == EXAMPLE_PROBE.read_bytes()
+    assert url is None
+
+
+def test_a_missing_probe_path_says_so_rather_than_raising_oserror():
+    import sigil.pipeline as pipe
+
+    with pytest.raises(PipelineError, match="probe image not found"):
+        pipe.load_probe_bytes("/no/such/face.jpg", Config())
+
+
+def test_a_url_probe_is_what_unlocks_the_lens_arm(monkeypatch):
+    """Threading probe_url through the pipeline has exactly one purpose."""
+    import sigil.pipeline as pipe
+
+    cfg = Config()
+    cfg.serpapi_key = "k"
+
+    assert [p.name for p in pipe.build_providers(cfg, None, b"bytes")] == ["bluesky"]
+    with_url = pipe.build_providers(cfg, "https://example.com/face.jpg", b"bytes")
+    assert [p.name for p in with_url] == ["bluesky", "serpapi-google-lens"]
+
+
+def test_a_probe_with_no_detectable_face_is_refused_with_advice():
+    """The most common way a run fails before it starts."""
+    import cv2
+    import numpy as np
+
+    import sigil.pipeline as pipe
+
+    ok, buf = cv2.imencode(".png", np.full((80, 80, 3), 200, dtype=np.uint8))
+    assert ok
+    with pytest.raises(PipelineError, match="no face detected"):
+        pipe.scan_probe(buf.tobytes(), Config())
+
+
+def test_an_undecodable_probe_is_refused_before_the_encoder():
+    import sigil.pipeline as pipe
+
+    with pytest.raises(PipelineError, match="could not be decoded"):
+        pipe.scan_probe(b"this is not an image", Config())

@@ -14,6 +14,38 @@ EXAMPLE_PROBE = ROOT / "examples" / "probe-aoc.jpg"
 EXAMPLE_CONTROL = ROOT / "examples" / "control-buttigieg.jpg"
 
 
+# Every optional credential. Config() calls load_dotenv(), so a developer's
+# own .env reaches any test that builds one.
+_CREDENTIALS = (
+    "GOOGLE_VISION_API_KEY",
+    "SERPAPI_KEY",
+    "BLUESKY_HANDLE",
+    "BLUESKY_APP_PASSWORD",
+    "SIGIL_PRIVATE_KEY",
+    "SIGIL_RPC_URL",
+    "SIGIL_CONTRACT",
+)
+
+
+@pytest.fixture(autouse=True)
+def _no_ambient_credentials(request, monkeypatch):
+    """Keep the offline suite independent of whatever is in the local .env.
+
+    Without this, `Config()` inherits the developer's keys and a test's result
+    depends on their machine. That is not hypothetical: a live test in this
+    suite asserted the winning search arm was Bluesky, which was true in CI
+    where no keys exist and false on any machine with a Vision key - green for
+    everyone who could not have caught it.
+
+    Network tests are exempt, since exercising the optional arms against the
+    real APIs is the entire point of them.
+    """
+    if request.node.get_closest_marker("network"):
+        return
+    for name in _CREDENTIALS:
+        monkeypatch.delenv(name, raising=False)
+
+
 @pytest.fixture
 def probe_ref():
     return ProbeRef(
