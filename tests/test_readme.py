@@ -68,23 +68,31 @@ def test_the_readme_covers_what_the_task_requires():
 def test_the_readme_states_the_real_offline_test_count(pytestconfig):
     """A stale count in a graded deliverable is a false claim, not a typo.
 
-    Two things make a count meaningless to compare, and both skip rather than
-    fail. A partial collection knows only its own files. And the count depends
-    on which optional extras are installed - without insightface, four of its
-    tests are never collected - so this checks the figure against the install
-    the README quotes it for, which is the Quickstart's ``.[insight,dev]``.
-    CI installs ``.[dev]`` alone and legitimately collects fewer.
+    Every figure is checked, not just the first one found. The README quotes
+    the count in more than one place - the Tests section and the fresh-clone
+    validation - and they had drifted to 494 and 467 while a regex that
+    stopped at the first match went on reporting the file consistent.
+
+    This deliberately does *not* skip without insightface. The count is the
+    same in both installs, measured: every insightface gate in this suite is a
+    runtime skip inside a test body, so those tests are collected either way -
+    494 with the extra and 494 without, the difference being 1 skip against 8,
+    not 7 fewer tests. An earlier version importorskip'd here on the theory
+    that collection varied, which made the one install that runs on every push
+    - CI's ``.[dev]`` - the one install that never checked the number. If a
+    module-level skip ever does make collection install-dependent, this goes
+    red rather than quiet, which is the right way round.
+
+    A partial collection still skips: only the full suite knows the count.
     """
     if getattr(pytestconfig, "collected_modules", 0) < 10:
         pytest.skip("partial collection - only the full suite knows the count")
-    pytest.importorskip(
-        "insightface",
-        reason="the README's count is for the full .[insight,dev] install",
-    )
 
-    stated = re.search(r"#\s*(\d+)\s+offline tests", README.read_text())
+    stated = re.findall(r"(\d+)\s+offline tests", README.read_text())
     assert stated, "the README no longer states an offline test count"
     actual = pytestconfig.offline_test_count
-    assert int(stated.group(1)) == actual, (
-        f"README says {stated.group(1)} offline tests, this run collected {actual}"
+    wrong = sorted({s for s in stated if int(s) != actual})
+    assert not wrong, (
+        f"README states {', '.join(wrong)} offline tests across "
+        f"{len(stated)} mention(s); this run collected {actual}"
     )

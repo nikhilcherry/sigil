@@ -232,16 +232,20 @@ Both backends find the same live match on a clean clone, so the fallback is a
 real alternative rather than a degraded mode. Verified from an actual fresh
 clone of `main` on 2026-09-03, with no API keys in the environment and the
 insightface extra not installed: `pip install -e ".[dev]"`,
-`./scripts/fetch_models.sh`, then 467 offline tests green at 95.46% coverage —
-its own CI floor — and the documented quickstart matched `@aoc.bsky.social` at
-0.7411 against the opencv threshold of 0.363, picture-vs-probe 0.0728, so a
-genuinely different photograph, anchored at 114,222 gas.
+`./scripts/fetch_models.sh`, then all **494 offline tests** collected and 486
+green at 96% coverage — above the 95% floor its own CI enforces, the eight
+skips being the insightface backend that install does not have — and the
+documented quickstart matched `@aoc.bsky.social` at 0.7411 against the opencv
+threshold of 0.363, picture-vs-probe 0.0728, so a genuinely different
+photograph, anchored at 114,222 gas.
 
-`./scripts/demo.sh` then ran end to end on that clone in **26 seconds** with no
-tracebacks: it named the face, found the post, anchored it, re-verified all six
-checks, rejected a tampered bundle, listed the registry's contents, and skipped
-the identity index and calibration it has not built yet rather than failing on
-them. That is the whole deliverable, from `git clone`, with nothing configured.
+`./scripts/demo.sh` then ran end to end on that clone in **32-35 seconds**
+(three consecutive runs: 35 s cold, then 32 s twice) with no tracebacks: it
+named the face, found the post, anchored it, re-verified all six checks,
+rejected a tampered bundle, listed the registry's contents, and skipped the
+identity index and calibration it has not built yet rather than failing on
+them. That is the whole deliverable, from `git clone`, with nothing
+configured.
 
 That gap is what makes a fixed threshold defensible, and `tests/test_face.py`
 asserts it on every run so a model or preprocessing change cannot quietly erode
@@ -739,16 +743,32 @@ verifying against new probes — pick one and keep it).
 ## Tests
 
 ```bash
-pytest -m "not network"   # 494 offline tests, 96% line coverage
+pytest -m "not network"   # 494 offline tests, 97% line coverage
 pytest -m network         # 3 tests against the live API and a live chain
 ```
 
-Those two figures are for the full `.[insight,dev]` install from the
-Quickstart. CI installs `.[dev]` alone — the 300 MB model pack is not worth a
-minute on every push — so it collects 402 and covers 95%, the difference being
-the insightface backend it never loads. Both numbers are enforced rather than
-asserted: the test count is checked against the README by the suite itself, and
-CI fails under its own coverage floor.
+Both installs collect the same **494 offline tests**. Every insightface gate in
+the suite is a runtime skip inside a test body rather than a collection-time
+one, so the extra changes how many tests *run*, not how many exist. What the
+two installs differ on is the skip count and the last coverage point:
+
+| install | passed | skipped | coverage |
+|---|---|---|---|
+| Quickstart `.[insight,dev]` | 493 | 1 | **97%** |
+| CI `.[dev]` | 486 | 8 | **96%** |
+
+The single skip in the full install is the opencv parametrisation of a test
+that only means anything for insightface; CI adds the seven that need the
+backend itself. CI installs `.[dev]` alone because the 300 MB model pack is not
+worth a minute on every push, and still enforces `--cov-fail-under=95`.
+
+Both numbers are enforced rather than asserted: CI fails under its own coverage
+floor, and the test count is checked against this README by the suite itself —
+in **both** installs, and against every place the README states it. That check
+used to skip without insightface, on the theory that collection varied by
+install. It does not, so the one install that runs on every push was the one
+install that never checked the number, and two figures in this file drifted to
+467 and 402 underneath it.
 
 CI runs the offline suite on 3.10, 3.11, 3.12 and 3.13. 3.10 is there because
 it is the floor `pyproject.toml` declares, and a declared floor nobody runs is
