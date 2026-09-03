@@ -732,7 +732,7 @@ verifying against new probes — pick one and keep it).
 ## Tests
 
 ```bash
-pytest -m "not network"   # 461 offline tests, 96% line coverage
+pytest -m "not network"   # 464 offline tests, 96% line coverage
 pytest -m network         # 3 tests against the live API and a live chain
 ```
 
@@ -818,6 +818,18 @@ on yourself, on a consenting subject, or on a public figure for a demonstration.
   the probe's embedding from its pixels, the source image's bytes, and the
   identity-vs-provenance claim from the two images — but no amount of
   re-derivation makes a face model right.
+- **Candidate *text* is chosen by a third party too, and the web UI renders
+  it.** A Bluesky display name is set by whoever owns the account; an
+  identity-index label comes from Wikidata. Both were interpolated straight
+  into `innerHTML`, so a display name of `<img src=x onerror=…>` executed in a
+  page served from localhost — with `/api/run`, `/api/tamper` and
+  `/api/evidence` one `fetch` away. A `post_url` of `javascript:…` was the same
+  hole with an extra click. Everything untrusted is HTML-escaped now, anything
+  becoming an `href` goes through an `http(s)`-only allowlist, and a rejected
+  URL becomes `#` rather than passing through. Both the hole and the fix were
+  confirmed in a real browser rather than reasoned about; a lint-style test
+  guards the shape, since pytest cannot run the page.
+
 - **A candidate URL is chosen by a third party, so it is checked before it is
   fetched.** Every image this tool downloads is at an address supplied by
   someone else — an AppView response, whatever Google's web index returned — and

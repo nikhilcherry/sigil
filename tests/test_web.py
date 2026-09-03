@@ -507,3 +507,81 @@ def test_the_evidence_endpoint_errors_cleanly_when_there_is_none(app):
     status, body = get_json(app + "/api/evidence")
     assert status == 400
     assert "error" in body and "Traceback" not in body["error"]
+
+
+# --------------------------------------------- untrusted text in the page
+
+# Fields whose value is written by someone other than the operator: a Bluesky
+# display name is set by its owner, an identity-index label comes from
+# Wikidata, a post URL comes from whichever arm found it. Each of these was
+# interpolated straight into innerHTML, so a display name of
+# `<img src=x onerror=...>` executed in a page served from localhost with
+# /api/run, /api/tamper and /api/evidence one fetch away. Confirmed executable
+# in a real browser before the fix, and confirmed inert after it.
+UNTRUSTED_IN_PAGE = (
+    "author_display_name",
+    "author_handle",
+    "h.name",
+    "h.source",
+    "x.handle",
+    "post_url",
+    "e.provider",
+    "e.error",
+    "e.tx_hash",
+)
+
+
+def _interpolations(html: str) -> list[str]:
+    """Every `${...}` in the page, non-greedy so nested braces do not swallow."""
+    import re
+
+    return re.findall(r"\$\{([^{}]*)\}", html)
+
+
+def test_every_untrusted_field_is_escaped_before_it_reaches_the_page():
+    """A browser test cannot run here, so this guards the shape instead.
+
+    It is a lint rather than a proof: it checks that no interpolation mentions
+    an attacker-controlled field without passing it through esc(). That is the
+    property that was violated, and the one a future edit is most likely to
+    violate again.
+    """
+    from pathlib import Path
+
+    html = (Path(__file__).resolve().parent.parent
+            / "sigil" / "web" / "index.html").read_text()
+    assert "function esc(" in html, "the escaping helper is gone"
+
+    offenders = []
+    for expr in _interpolations(html):
+        for field in UNTRUSTED_IN_PAGE:
+            if field in expr and "esc(" not in expr:
+                offenders.append(expr.strip())
+    assert not offenders, f"unescaped untrusted fields in the page: {offenders}"
+
+
+def test_anything_becoming_an_href_goes_through_the_url_allowlist():
+    """`javascript:` in an href is the same hole with an extra click."""
+    import re
+    from pathlib import Path
+
+    html = (Path(__file__).resolve().parent.parent
+            / "sigil" / "web" / "index.html").read_text()
+    assert "function safeUrl(" in html, "the URL allowlist is gone"
+
+    hrefs = re.findall(r'href="(\$\{[^"]*\})"', html)
+    assert hrefs, "no interpolated hrefs found - did the page change shape?"
+    for h in hrefs:
+        assert "safeUrl(" in h, f"href built without the allowlist: {h}"
+
+
+def test_the_url_allowlist_only_admits_http_and_https():
+    """Asserted against the helper's own source, since JS cannot run here."""
+    from pathlib import Path
+
+    html = (Path(__file__).resolve().parent.parent
+            / "sigil" / "web" / "index.html").read_text()
+    body = html[html.index("function safeUrl("):]
+    body = body[:body.index("\n}")]
+    assert "https?" in body and 'return' in body
+    assert '"#"' in body, "a rejected URL must become inert, not pass through"

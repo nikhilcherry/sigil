@@ -451,7 +451,7 @@ function done(){
   chainState();
 }
 function fail(msg){
-  $("errbox").innerHTML = `<div class="err">${msg}</div>`;
+  $("errbox").innerHTML = `<div class="err">${esc(msg)}</div>`;
   done();
 }
 
@@ -491,8 +491,8 @@ function handle(e){
       $("idrows").innerHTML = e.hits.map(h => `
         <div class="idrow ${h.accepted ? "ok" : ""}">
           <span class="sc">${h.similarity.toFixed(4)}</span>
-          <span class="nm">${h.name}</span>
-          <span class="src">${h.source}</span>
+          <span class="nm">${esc(h.name)}</span>
+          <span class="src">${esc(h.source)}</span>
         </div>`).join("");
       break;
 
@@ -535,7 +535,7 @@ function providerFailed(e){
   const box = $("errbox");
   box.insertAdjacentHTML("beforeend",
     `<div class="err" style="border-color:var(--amber);color:var(--amber);background:rgba(255,178,36,.06)">
-       search arm <b>${e.provider}</b> failed (${e.error}) and was dropped — the run continued with the others,
+       search arm <b>${esc(e.provider)}</b> failed (${esc(e.error)}) and was dropped — the run continued with the others,
        against a narrower set of candidates.
      </div>`);
 }
@@ -577,8 +577,8 @@ function renderSheet(){
     const mine = anchoredUrl && x.image_url === anchoredUrl;
     return `
     <div class="cand ${x.hit ? "hit" : ""} ${copy ? "copy" : ""} ${mine ? "anchored" : ""}">
-      <img src="${x.image_url}" loading="lazy" alt="">
-      <div class="s"><span>${x.similarity.toFixed(3)}</span><em>@${x.handle || "web"}</em></div>
+      <img src="${esc(safeUrl(x.image_url))}" loading="lazy" alt="">
+      <div class="s"><span>${x.similarity.toFixed(3)}</span><em>@${esc(x.handle || "web")}</em></div>
       <div class="claim">${mine ? "◀ anchored" : (copy ? "same photo" : "different photo")}</div>
     </div>`;
   }).join("");
@@ -613,8 +613,10 @@ function showMatch(e){
   $("m-img").src = e.match.image_url;
   $("m-sim").textContent = e.similarity.toFixed(4);
   $("m-thr").textContent = `threshold ${e.threshold.toFixed(3)}`;
-  $("m-acct").innerHTML = `${e.match.author_display_name || ""} <span style="color:var(--amber)">@${e.match.author_handle}</span>`;
-  $("m-post").innerHTML = `<a href="${e.match.post_url}" target="_blank" rel="noopener">${e.match.post_url}</a>`;
+  $("m-acct").innerHTML = `${esc(e.match.author_display_name || "")} `
+    + `<span style="color:var(--amber)">@${esc(e.match.author_handle)}</span>`;
+  $("m-post").innerHTML = `<a href="${esc(safeUrl(e.match.post_url))}" `
+    + `target="_blank" rel="noopener">${esc(e.match.post_url)}</a>`;
   $("m-via").textContent = e.match.discovered_via;
   const identity = e.match.claim === "identity";
   $("m-claim").innerHTML = identity
@@ -648,8 +650,29 @@ function showAnchor(e){
   $("a-contract").textContent = e.contract || "—";
   $("a-subject").textContent = e.subject_ref || "—";
   if(e.explorer){
-    $("a-tx").innerHTML = `<a href="${e.explorer}" target="_blank" rel="noopener">${e.tx_hash}</a>`;
+    $("a-tx").innerHTML = `<a href="${esc(safeUrl(e.explorer))}" `
+      + `target="_blank" rel="noopener">${esc(e.tx_hash)}</a>`;
   }
+}
+
+/* ---------- untrusted text ----------
+
+   Everything a provider hands back is written by someone else. A Bluesky
+   display name is set by its owner, an identity-index label comes from
+   Wikidata, and both used to be interpolated straight into innerHTML - so a
+   display name of `<img src=x onerror=...>` executed here, in a page served
+   from localhost with /api/run, /api/tamper and /api/evidence one fetch away.
+
+   esc() is for text. safeUrl() is for anywhere a value becomes an href:
+   `javascript:` in one of those is the same hole with an extra click. */
+function esc(v){
+  return String(v ?? "").replace(/[&<>"']/g, c => (
+    {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]
+  ));
+}
+function safeUrl(v){
+  const raw = String(v ?? "").trim();
+  return /^https?:\/\//i.test(raw) ? raw : "#";
 }
 
 const CHECKS = [
@@ -672,7 +695,7 @@ function showVerification(v){
   $("verdict").className = "verdict " + (v.ok ? "p" : "f");
   $("verdict").textContent = v.ok ? "Verified" : "Not verified";
   $("vnotes").innerHTML = (v.notes || []).length
-    ? `<div class="note">${v.notes.join("<br>")}</div>` : "";
+    ? `<div class="note">${v.notes.map(esc).join("<br>")}</div>` : "";
   stage("verify", v.ok ? "ok" : "bad", v.ok ? "hash matches chain" : "mismatch");
 }
 
