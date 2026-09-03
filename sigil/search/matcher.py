@@ -61,6 +61,31 @@ def _dedup(it: Iterable[Candidate]) -> Iterator[Candidate]:
         yield c
 
 
+def interleave(streams: list[Iterator[Candidate]]) -> Iterator[Candidate]:
+    """Merge candidate streams round-robin, dropping each as it runs dry.
+
+    Chaining them instead - which is what this replaces - silently starved
+    every arm after the first. ``max_images`` truncates the merged stream, and
+    Bluesky alone yields more candidates than the default cap, so a configured
+    Google Vision arm was listed as a provider, reported in the trace, and
+    never advanced once: its generator body never ran, so it never even called
+    the API. An arm that cannot contribute is worse than an absent one, since
+    the run claims coverage it does not have.
+
+    Round-robin also puts each arm's own best guesses early, which is what a
+    truncated budget spends itself on: Bluesky orders avatars ahead of feed
+    images, and Vision orders page-anchored matches ahead of merely similar
+    ones.
+    """
+    live = list(streams)
+    while live:
+        for stream in list(live):
+            try:
+                yield next(stream)
+            except StopIteration:
+                live.remove(stream)
+
+
 def score_image(encoder, probe: Face, image_bytes: bytes) -> tuple[float, int, list[int]]:
     """Best similarity between the probe and any face in one image."""
     img = decode_image(image_bytes)
@@ -94,9 +119,7 @@ def search_and_match(
     # strings), and URL dedup cannot see that.
     by_digest: dict[str, tuple[float, int, list[int]]] = {}
 
-    stream = _dedup(
-        itertools.chain.from_iterable(p.candidates(query) for p in providers)
-    )
+    stream = _dedup(interleave([p.candidates(query) for p in providers]))
     stream = itertools.islice(stream, cfg.max_images)
 
     def fetch(c: Candidate) -> bytes | None:

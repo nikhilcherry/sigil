@@ -1,5 +1,7 @@
 """Search-layer behaviour, exercised without touching the network."""
 
+import itertools
+
 import numpy as np
 import pytest
 
@@ -7,7 +9,7 @@ from sigil.config import Config
 from sigil.face import Face
 from sigil.search.base import Candidate, ProviderTrace
 from sigil.search.bluesky import BlueskyProvider, at_uri_to_web_url
-from sigil.search.matcher import _dedup, search_and_match
+from sigil.search.matcher import _dedup, interleave, search_and_match
 from sigil.search.serpapi import SerpApiLensProvider
 
 
@@ -74,6 +76,44 @@ def test_post_without_images_yields_nothing():
 def test_dedup_keeps_first_occurrence_of_each_image():
     cands = [_candidate("a"), _candidate("b"), _candidate("a"), _candidate("c")]
     assert [c.image_url for c in _dedup(cands)] == ["a", "b", "c"]
+
+
+def test_interleave_takes_from_every_stream_in_turn():
+    got = list(interleave([iter("abc"), iter("xy"), iter("1")]))
+    assert got == ["a", "x", "1", "b", "y", "c"]
+
+
+def test_interleave_is_lazy_and_does_not_drain_a_stream_to_reach_the_next():
+    """A chained stream only advances arm 2 after arm 1 is exhausted."""
+    pulled = []
+
+    def counted(tag, n):
+        for i in range(n):
+            pulled.append(tag)
+            yield f"{tag}{i}"
+
+    merged = interleave([counted("a", 100), counted("b", 100)])
+    first_four = [next(merged) for _ in range(4)]
+    assert first_four == ["a0", "b0", "a1", "b1"]
+    # One read-ahead per stream is inherent to round-robin; a hundred is not.
+    assert pulled.count("b") <= 3
+
+
+def test_a_prolific_arm_cannot_starve_the_others_out_of_the_budget():
+    """The regression this exists for.
+
+    Bluesky routinely yields more candidates than ``max_images``. Chained, that
+    meant a configured Vision arm was never advanced even once - reported as a
+    provider, credited in the trace, and never actually asked.
+    """
+    prolific = (f"a{i}" for i in range(500))
+    quiet = iter(["b0", "b1"])
+    budget = list(itertools.islice(interleave([prolific, quiet]), 20))
+    assert "b0" in budget and "b1" in budget
+
+
+def test_interleave_over_no_streams_is_empty_not_a_hang():
+    assert list(interleave([])) == []
 
 
 def test_serpapi_is_skipped_without_a_public_probe_url():
@@ -154,6 +194,34 @@ def test_max_images_caps_the_work(monkeypatch):
         FakeEncoder({}), _face([1, 0, 0]), [provider], "q", 0.38, cfg
     )
     assert result.images_examined == 5
+
+
+def test_a_second_arm_is_consulted_even_when_the_first_overflows_the_budget(
+    monkeypatch,
+):
+    """End to end through the matcher, not just the merge helper.
+
+    A prolific first arm used to consume ``max_images`` entirely, so a second
+    provider's generator was never advanced - meaning it never issued its API
+    call and contributed nothing, while still being named as a provider used.
+    """
+    import sigil.search.matcher as m
+
+    monkeypatch.setattr(m, "fetch_image", lambda s, u, t: b"x")
+    monkeypatch.setattr(m, "score_image", lambda e, p, b: (0.1, 1, []))
+
+    cfg = Config()
+    cfg.max_images = 10
+    prolific = FakeProvider([_candidate(f"https://a{i}") for i in range(500)])
+    quiet = FakeProvider([_candidate("https://b0"), _candidate("https://b1")])
+    result = search_and_match(
+        FakeEncoder({}), _face([1, 0, 0]), [prolific, quiet], "q", 0.38, cfg
+    )
+
+    assert quiet.trace.calls, "the second arm was never asked for candidates"
+    seen = {s.candidate.image_url for s in result.ranked}
+    assert {"https://b0", "https://b1"} <= seen
+    assert result.images_examined == 10
 
 
 def test_the_trace_records_what_was_actually_queried(monkeypatch):
