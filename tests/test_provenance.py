@@ -369,3 +369,50 @@ def test_a_reposted_crop_no_longer_outranks_an_independent_photograph():
     crop = _scored(0.9713, 0.7915, "fanaccount", kind="social")
     official = _scored(0.7596, 0.0213, "aoc", kind="social")
     assert pick_best([crop, official], threshold=0.38) is official
+
+
+def test_without_the_probe_image_no_candidate_is_called_a_republication(
+    monkeypatch,
+):
+    """The degradation is deliberate, not an oversight.
+
+    `run_pipeline` always passes the probe's pixels. A caller using the search
+    layer directly may not, and then there is no whole-image comparison to
+    make - so nothing may be labelled provenance on the strength of a
+    comparison that never happened, and selection falls back to source kind
+    then cosine.
+    """
+    import sigil.search.matcher as m
+    from sigil.config import Config
+    from sigil.face import Face
+
+    monkeypatch.setattr(m, "fetch_image", lambda s, u, t: u.encode())
+    # A real score_image, so the fingerprint half is genuinely exercised.
+    ok, buf = cv2.imencode(".png", _picture(21))
+    assert ok
+    monkeypatch.setattr(m, "fetch_image", lambda s, u, t: buf.tobytes())
+
+    class Provider:
+        name = "stub"
+
+        def __init__(self):
+            from sigil.search.base import ProviderTrace
+
+            self.trace = ProviderTrace(provider=self.name)
+
+        def candidates(self, query):
+            for i in range(3):
+                yield Candidate(
+                    platform="web", image_url=f"https://c{i}", post_url="p",
+                    post_uri="p", author_handle=f"c{i}", author_did="",
+                    author_display_name="", text="", created_at="",
+                    discovered_via="v")
+
+    probe = Face(embedding=np.array([1.0, 0.0], dtype=np.float32),
+                 bbox=[0, 0, 1, 1], det_score=0.9)
+    result = m.search_and_match(OneFace(), probe, [Provider()], "q", 0.38,
+                                Config())  # note: no probe_image
+
+    assert result.ranked, "nothing was scored"
+    assert all(s.photo_similarity == 0.0 for s in result.ranked)
+    assert all(s.claim == IDENTITY for s in result.ranked)

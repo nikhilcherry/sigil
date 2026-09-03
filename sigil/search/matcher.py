@@ -178,6 +178,13 @@ def search_and_match(
     probe_image: np.ndarray | None = None,
 ) -> MatchResult:
     session = make_session()
+    # Without the probe's pixels there is no whole-image comparison to make, so
+    # every candidate scores 0.0 and is labelled an identity claim - which is
+    # the truthful answer for a candidate that has not been shown to be the
+    # probe's own picture, and it makes `pick_best` fall back to source kind
+    # then cosine. `run_pipeline` always supplies it; this path exists for
+    # callers using the search layer on its own, and it degrades rather than
+    # inventing a distinction it cannot draw.
     probe_fp = None if probe_image is None else fingerprint(probe_image)
     result = MatchResult(best=None)
     scored: list[ScoredCandidate] = []
