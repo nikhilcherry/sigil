@@ -214,6 +214,18 @@ def search_and_match(
             # bytes give an identical verdict, but the *posts* differ, and the
             # post is what gets anchored. Hashing is microseconds; a redundant
             # detect+encode is not.
+            #
+            # Identical *bytes* is the right granularity, and the looser cache
+            # that suggests itself is not. A reverse-image arm returns the same
+            # photograph a hundred times over, rescaled and recompressed, so
+            # keying this on the whole-image fingerprint instead would collapse
+            # them - and it is unsound. Measured over 161 real candidates, even
+            # at a fingerprint correlation of 0.9999, where the two pictures are
+            # indistinguishable at 32x32, the encoder's verdicts on them differ
+            # by up to 0.0613 cosine. That is a sixth of the decision threshold,
+            # enough to move a borderline candidate across it, and it is bought
+            # for 1.5x. ArcFace is resolution-sensitive at that scale, which is
+            # the same fact the det_size note in the insight backend is about.
             digest = sha256_hex(blob)
             cached = by_digest.get(digest)
             if cached is not None:
