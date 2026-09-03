@@ -232,7 +232,7 @@ Both backends find the same live match on a clean clone, so the fallback is a
 real alternative rather than a degraded mode. Verified from an actual fresh
 clone of `main` on 2026-09-03, with no API keys in the environment and the
 insightface extra not installed: `pip install -e ".[dev]"`,
-`./scripts/fetch_models.sh`, then all **506 offline tests** collected and 498
+`./scripts/fetch_models.sh`, then all **508 offline tests** collected and 500
 green at 96% coverage — above the 95% floor its own CI enforces, the eight
 skips being the insightface backend that install does not have — and the
 documented quickstart matched `@aoc.bsky.social` at 0.7411 against the opencv
@@ -743,26 +743,26 @@ verifying against new probes — pick one and keep it).
 ## Tests
 
 ```bash
-pytest -m "not network"   # 506 offline tests, 97% line coverage
+pytest -m "not network"   # 508 offline tests, 97% line coverage
 pytest -m network         # 3 tests against the live API and a live chain
 ```
 
-Both installs collect the same **506 offline tests**. Every insightface gate in
+Both installs collect the same **508 offline tests**. Every insightface gate in
 the suite is a runtime skip inside a test body rather than a collection-time
 one, so the extra changes how many tests *run*, not how many exist. What the
 two installs differ on is the skip count and the last coverage point:
 
 | install | passed | skipped | coverage |
 |---|---|---|---|
-| Quickstart `.[insight,dev]` | 505 | 1 | **97%** |
-| CI `.[dev]` | 498 | 8 | **96%** |
+| Quickstart `.[insight,dev]` | 507 | 1 | **97%** |
+| CI `.[dev]` | 500 | 8 | **96%** |
 
 The single skip in the full install is the opencv parametrisation of a test
 that only means anything for insightface; CI adds the seven that need the
 backend itself. CI installs `.[dev]` alone because the 300 MB model pack is not
 worth a minute on every push, and still enforces `--cov-fail-under=95`.
 
-That 506 is a 3.11-and-up figure. On 3.10 it is 498, because `tomllib` is not
+That 508 is a 3.11-and-up figure. On 3.10 it is 500, because `tomllib` is not
 in that stdlib and `tests/test_packaging.py` skips at import — a module-level
 skip drops its eight tests out of *collection* rather than reporting them as
 skipped, which is the one way a count stops being comparable between two runs.

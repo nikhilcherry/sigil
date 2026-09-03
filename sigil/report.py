@@ -56,7 +56,10 @@ def search_panel(result, threshold: float, providers: list[str]) -> None:
     t = Table.grid(padding=(0, 2))
     t.add_column(style="dim", justify="right")
     t.add_column()
-    t.add_row("providers", ", ".join(providers))
+    # Provider names are this project's own constants rather than anything a
+    # third party supplies, but they go through q() like every other rendered
+    # value: the rule is cheaper to keep than to reason about per field.
+    t.add_row("providers", ", ".join(q(p) for p in providers))
     t.add_row("images fetched", str(result.images_examined))
     t.add_row("images with a face", str(result.images_with_faces))
     t.add_row("faces compared", str(result.faces_examined))

@@ -349,3 +349,97 @@ def test_the_report_still_styles_its_own_output(evidence):
     # Its own labels render as text, not as literal tags.
     assert "[bold green]" not in out
     assert "identity" in out and "Match found" in out
+
+
+# ---------------------------- markup, without naming the fields in advance
+
+# A payload distinct from anything the report prints itself, so counting it
+# cannot collide with the report's own styling.
+FORGE = "[bold green]PWNED-SIGIL[/bold green]"
+
+
+def _markup_survived(out: str) -> tuple[int, int]:
+    """(times the payload text appears, times it appears still bracketed).
+
+    rich consumes the brackets when it interprets them, so the two counts
+    diverge exactly when a field was styled rather than quoted.
+    """
+    return out.count("PWNED-SIGIL"), out.count(FORGE)
+
+
+@pytest.fixture
+def wide_console():
+    """Render without column wrapping, so the counting above means something.
+
+    At the default width a table splits `[bold green]PWNED-SIGIL[/bold green]`
+    across lines, and an escaped payload then fails to match its own literal -
+    the test would report every field as interpreted, including the ones that
+    are correctly quoted. Widening is measurement hygiene, not leniency.
+    """
+    from sigil.report import console
+
+    before = console.width
+    console.width = 400
+    yield console
+    console.width = before
+
+
+def _hostile_candidate():
+    from sigil.search.base import Candidate
+    from sigil.search.matcher import ScoredCandidate
+
+    return ScoredCandidate(
+        candidate=Candidate(
+            platform=FORGE, image_url="https://i", post_url="https://p",
+            post_uri=FORGE, author_handle=FORGE, author_did=FORGE,
+            author_display_name=FORGE, text=FORGE, created_at=FORGE,
+            discovered_via=FORGE, source_kind="social"),
+        similarity=0.9, image_sha256="ab" * 32, faces_in_image=1,
+        matched_bbox=[0, 0, 1, 1], photo_similarity=0.02, rank=1)
+
+
+def test_no_third_party_string_can_style_itself_in_the_search_panel(wide_console):
+    """Every string field set hostile at once, rather than one named field.
+
+    The tests above each pin one field that was known to be dangerous, which
+    is only ever as good as the list of names. This sets *all* of them, so a
+    field added to Candidate later is covered the day it is rendered rather
+    than the day somebody remembers to add it here.
+
+    Why it matters more than it looks: the terminal output is what the screen
+    recording shows as the evidence, so an account able to style its own row
+    can forge the appearance of a verdict.
+    """
+    from sigil.report import search_panel
+    from sigil.search.matcher import MatchResult
+
+    hostile = _hostile_candidate()
+    with wide_console.capture() as cap:
+        search_panel(MatchResult(best=hostile, ranked=[hostile]), 0.38, [FORGE])
+    seen, bracketed = _markup_survived(cap.get())
+    assert seen and seen == bracketed, (
+        f"{seen - bracketed} of {seen} payload occurrences were interpreted "
+        "as markup rather than quoted"
+    )
+
+
+def test_no_third_party_string_can_style_itself_in_the_match_panel(evidence, wide_console):
+    from dataclasses import replace
+
+    from sigil.report import match_panel
+
+    hostile_match = replace(
+        evidence.match,
+        platform=FORGE, post_uri=FORGE, author_handle=FORGE, author_did=FORGE,
+        author_display_name=FORGE, text=FORGE, created_at=FORGE,
+        discovered_via=FORGE,
+    )
+    hostile = replace(evidence, match=hostile_match)
+
+    with wide_console.capture() as cap:
+        match_panel(hostile, _hostile_candidate())
+    seen, bracketed = _markup_survived(cap.get())
+    assert seen and seen == bracketed, (
+        f"{seen - bracketed} of {seen} payload occurrences were interpreted "
+        "as markup rather than quoted"
+    )
