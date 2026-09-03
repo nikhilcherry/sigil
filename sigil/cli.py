@@ -450,6 +450,60 @@ def serve(port, host, no_browser):
 
 
 @cli.command()
+@click.option("--limit", default=200, show_default=True,
+              help="How many indexed identities to harvest second portraits for.")
+@click.option("--backend", type=click.Choice(["auto", "insightface", "opencv"]),
+              default=None)
+@click.option("--threshold", type=float, default=None,
+              help="The threshold to report rates at. Defaults to the one in use.")
+@click.option("--langs", default=None,
+              help="Comma-separated Wikipedias to pull portraits from.")
+@click.option("--born-after", type=int, default=None,
+              help="Only use identities born after this year for genuine pairs. "
+                   "0 disables the filter and lets busts and paintings in.")
+@click.option("--show", is_flag=True,
+              help="Print the last saved calibration instead of measuring a new one.")
+def calibrate(limit, backend, threshold, langs, born_after, show):
+    """Measure what the match threshold actually costs in false accepts and misses.
+
+    Impostor pairs are every cross-identity pair in the local identity index.
+    Genuine pairs are harvested live: different language Wikipedias illustrate
+    the same person with different photographs, which is a second capture of a
+    face already labelled by Wikidata rather than by this tool.
+    """
+    from . import calibrate as calibration
+    from .calibrate import BORN_AFTER, PORTRAIT_LANGS, Calibration
+
+    if show:
+        try:
+            report.calibration_panel(Calibration.load())
+        except (FileNotFoundError, KeyError, ValueError) as exc:
+            raise click.ClickException(str(exc)) from exc
+        return
+
+    cfg = _cfg(face_backend=backend)
+    try:
+        encoder = load_encoder(cfg.face_backend)
+    except RuntimeError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    chosen = threshold if threshold is not None else cfg.threshold_for(encoder.name)
+    wanted = tuple(x.strip() for x in langs.split(",") if x.strip()) if langs \
+        else PORTRAIT_LANGS
+    try:
+        era = BORN_AFTER if born_after is None else (born_after or None)
+        result = calibration.calibrate(
+            encoder, chosen, limit=limit, langs=wanted, born_after=era,
+            on_progress=lambda m: console.print(f"[dim]{m}[/dim]"))
+    except (FileNotFoundError, RuntimeError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    result.save()
+    console.print(f"[dim]saved to {calibration.CALIBRATION_PATH}[/dim]")
+    report.calibration_panel(result)
+
+
+@cli.command()
 def backends():
     """Report which face backends this machine can actually load."""
     from rich.table import Table

@@ -169,3 +169,104 @@ def identity_table(event: dict[str, Any], echo: bool = False):
         console.print(t)
         return None
     return t
+
+
+def _sci(x: float) -> str:
+    """A rate as both a probability and a "one in N", which is the readable half."""
+    if x <= 0:
+        return "0 [dim](none in the whole set)[/dim]"
+    return f"{x:.3e} [dim](1 in {round(1 / x):,})[/dim]"
+
+
+def calibration_panel(c) -> None:
+    """Render a measured threshold calibration: what 0.38 actually costs."""
+    head = Table.grid(padding=(0, 2))
+    head.add_column(style="dim", justify="right")
+    head.add_column()
+    head.add_row("backend", f"{c.backend} [dim]({c.model})[/dim]")
+    head.add_row("threshold under test", f"[bold]{c.threshold:.3f}[/bold]")
+    head.add_row("genuine pairs",
+                 f"{c.genuine.pairs:,} [dim]from {c.sampled_identities} people with "
+                 f"{c.portraits_encoded} portraits between them[/dim]")
+    if c.born_after is not None:
+        head.add_row("photographic era",
+                     f"born after {c.born_after} [dim]— "
+                     f"{c.sampled_photographic} of {c.sampled_requested} sampled "
+                     f"identities qualify; the rest are painted or sculpted[/dim]")
+    head.add_row("impostor pairs",
+                 f"{c.impostor.pairs:,} [dim]every cross-identity pair of "
+                 f"{c.index_identities:,} indexed people[/dim]")
+    console.print(Panel(head, title="Threshold calibration", border_style="cyan",
+                        expand=False))
+
+    d = Table(header_style="bold", border_style="dim", title="Similarity distributions")
+    d.add_column("population")
+    for col in ("pairs", "mean", "sd", "min", "median", "max"):
+        d.add_column(col, justify="right")
+    d.add_row("same person", f"{c.genuine.pairs:,}", f"{c.genuine.mean:.4f}",
+              f"{c.genuine.sd:.4f}", f"{c.genuine.minimum:.4f}",
+              f"{c.genuine.quantiles.get('p50', float('nan')):.4f}",
+              f"{c.genuine.maximum:.4f}")
+    d.add_row("different people", f"{c.impostor.pairs:,}", f"{c.impostor.mean:.4f}",
+              f"{c.impostor.sd:.4f}", f"{c.impostor.minimum:.4f}",
+              f"{c.impostor.quantiles.get('p50', float('nan')):.4f}",
+              f"{c.impostor.maximum:.4f}")
+    console.print(d)
+
+    r = Table.grid(padding=(0, 2))
+    r.add_column(style="dim", justify="right")
+    r.add_column()
+    r.add_row("true positive rate", f"[bold green]{c.tpr * 100:.2f}%[/bold green] "
+                                    f"[dim]of same-person pairs are caught[/dim]")
+    r.add_row("false positive rate", _sci(c.fpr))
+    r.add_row("  discounting artefacts",
+              f"{_sci(c.fpr_excluding_artefacts)} [dim]dropping the "
+              f"{c.artefact_pairs} pairs at ≥ 0.99, which are one person "
+              f"indexed twice[/dim]")
+    r.add_row("equal error rate",
+              f"{c.eer * 100:.2f}% [dim]at threshold {c.eer_threshold:.2f}[/dim]")
+    for name, t in c.thresholds_for_fpr.items():
+        r.add_row(f"threshold for FPR {name}", f"{t:.4f}")
+    console.print(Panel(r, title=f"At threshold {c.threshold:.3f}",
+                        border_style="green", expand=False))
+
+    if c.artefact_examples:
+        a = Table(header_style="bold", border_style="dim",
+                  title="Closest 'different people' pairs — read these before trusting the FPR")
+        a.add_column("similarity", justify="right")
+        a.add_column("index says")
+        a.add_column("and")
+        for e in c.artefact_examples:
+            a.add_row(Text(f"{e['similarity']:.4f}",
+                           style="red" if e["similarity"] >= 0.99 else "yellow"),
+                      e["a"], e["b"])
+        console.print(a)
+
+    if c.hardest_genuine:
+        h = Table(header_style="bold", border_style="dim",
+                  title="Hardest same-person pairs")
+        h.add_column("similarity", justify="right")
+        h.add_column("person")
+        for e in c.hardest_genuine:
+            h.add_row(Text(f"{e['similarity']:.4f}",
+                           style="green" if e["similarity"] >= c.threshold else "red"),
+                      e["name"])
+        console.print(h)
+
+    # The one sentence a reader needs: the threshold is not at the point that
+    # minimises total error, and that is deliberate.
+    side = ("stricter" if c.threshold > c.eer_threshold else "looser")
+    console.print(Panel(
+        f"At {c.threshold:.3f} the model catches [bold]{c.tpr * 100:.1f}%[/bold] of "
+        f"same-person pairs and falsely accepts {_sci(c.fpr)}.\n"
+        f"That is {side} than the equal-error point of {c.eer_threshold:.2f}: it "
+        f"gives up recall to buy a lower false-accept rate, which is the right way "
+        f"round for a tool that puts a name to a stranger.\n\n"
+        "[dim]Genuine pairs are different lead photographs of one person across "
+        "language Wikipedias. Some are crops of one file, which flatters the true "
+        "positive rate; the subject of a group photo is taken to be its largest "
+        "face, which depresses it. Neither is corrected by hand. Impostor pairs "
+        "are every cross-identity pair in the index as it actually stands, "
+        "duplicate entities and all - which is what a probe is really compared "
+        "against.[/dim]",
+        title="What this argues", border_style="cyan", expand=False))

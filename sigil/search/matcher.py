@@ -125,6 +125,18 @@ def search_and_match(
     def fetch(c: Candidate) -> bytes | None:
         return fetch_image(session, c.image_url, cfg.http_timeout)
 
+    # A cheap pre-filter here does not pay, and it looks like it should.
+    # Measured over two real candidate corpora (285 and 244 images), only 22%
+    # and 49% of them contain a face at all, so the expensive detector is
+    # mostly deciding that there is nothing to decide. Gating on YuNet first -
+    # 232 KB, ~16 ms an image against RetinaFace's ~400 ms - and only running
+    # the real encoder on images it flags gave 1.24x and 1.17x, because at the
+    # only operating point with 100% recall against insightface@640 YuNet
+    # still passes about half the face-free images: on open-web material
+    # (logos, screenshots, text graphics) it finds faces almost everywhere.
+    # Anything faster costs recall, which is the same trade det_size=320 was
+    # rejected for. Not worth a second model on the critical path.
+    #
     # Network in parallel, inference serially. Inference is the expensive half
     # by a wide margin - a default run spends a couple of minutes in ONNX
     # against a few seconds of download across eight workers - and onnxruntime

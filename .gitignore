@@ -20,5 +20,8 @@ models/*.onnx
 # rather than committing tens of MB of embeddings.
 models/identity-index.*
 
+# A measured calibration is derived from that index - `sigil calibrate`.
+models/calibration.json
+
 # Secrets.
 .env

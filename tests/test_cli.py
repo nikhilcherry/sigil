@@ -308,3 +308,69 @@ def test_index_build_defaults_to_the_ten_language_spread(monkeypatch):
     assert seen["langs"] == idmod.DEFAULT_LANGS
     assert len(seen["langs"]) == 10
     assert "hi" in seen["langs"] and "ta" in seen["langs"]
+
+
+# ---------------------------------------------------------------- calibrate
+
+
+def test_calibrate_show_without_a_measurement_says_how_to_make_one(monkeypatch,
+                                                                   tmp_path):
+    import sigil.calibrate as cal
+
+    monkeypatch.setattr(cal, "CALIBRATION_PATH", tmp_path / "absent.json")
+    result = CliRunner().invoke(cli, ["calibrate", "--show"])
+    assert result.exit_code != 0
+    assert "sigil calibrate" in result.output
+
+
+def test_calibrate_show_renders_a_saved_measurement(monkeypatch, tmp_path):
+    import numpy as np
+
+    import sigil.calibrate as cal
+    from sigil.identify import Identity, IdentityIndex
+
+    class Enc:
+        name, model = "fake", "fake-model"
+
+    index = IdentityIndex(
+        np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32),
+        [Identity(name=n, qid=f"Q{i}", image_url="https://x", source="en.wikipedia")
+         for i, n in enumerate(("A", "B"))],
+        "fake",
+    )
+    by_qid = {"Qa": [np.array([1.0, 0.0]), np.array([0.9, 0.436])]}
+    saved = tmp_path / "calibration.json"
+    cal.measure(Enc(), index, by_qid, threshold=0.38, requested=1).save(saved)
+    monkeypatch.setattr(cal, "CALIBRATION_PATH", saved)
+
+    result = CliRunner().invoke(cli, ["calibrate", "--show"])
+    assert result.exit_code == 0, result.output
+    assert "Threshold calibration" in result.output
+    assert "0.380" in result.output
+
+
+def test_calibrate_passes_the_era_filter_through_and_zero_disables_it(monkeypatch):
+    """`--born-after 0` has to mean "no filter", not "born after year zero"."""
+    import sigil.calibrate as cal
+
+    seen = {}
+
+    def fake(encoder, threshold, limit, langs, born_after, on_progress):
+        seen.update(threshold=threshold, limit=limit, langs=langs,
+                    born_after=born_after)
+        raise RuntimeError("stop here - the arguments are what is under test")
+
+    monkeypatch.setattr(cal, "calibrate", fake)
+    CliRunner().invoke(cli, ["calibrate", "--limit", "3", "--threshold", "0.5",
+                             "--langs", "en,fr", "--born-after", "0"])
+    assert seen["born_after"] is None
+    assert seen["threshold"] == 0.5 and seen["limit"] == 3
+    assert seen["langs"] == ("en", "fr")
+
+    seen.clear()
+    CliRunner().invoke(cli, ["calibrate", "--born-after", "1950"])
+    assert seen["born_after"] == 1950
+
+    seen.clear()
+    CliRunner().invoke(cli, ["calibrate"])
+    assert seen["born_after"] == cal.BORN_AFTER

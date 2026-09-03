@@ -32,6 +32,7 @@ outcome rather than a failure.
 | Live social search | anonymous AT Protocol (`searchActors`, `getAuthorFeed`); Google Cloud Vision web detection and Google Lens when configured | [`sigil/search/`](sigil/search/) · [§3](#3--web--social-search) |
 | Blockchain record | keccak256 over a canonical evidence bundle → append-only Solidity registry, on a persisted local py-evm chain or any EVM node | [`contracts/SigilRegistry.sol`](contracts/SigilRegistry.sol) · [§4](#4--blockchain-verification) |
 | Re-verification | recompute the hash and check it against chain state, not against a log | `sigil verify` · [below](#verifying-and-proving-that-verification-bites) |
+| Threshold calibration | 6.4 M real impostor pairs against genuine pairs harvested across language Wikipedias | [`sigil/calibrate.py`](sigil/calibrate.py) · [§5](#5--calibration--what-the-threshold-actually-costs) |
 
 The whole sequence, end to end, is `./scripts/demo.sh`.
 
@@ -116,7 +117,8 @@ real alternative rather than a degraded mode.
 
 That gap is what makes a fixed threshold defensible, and `tests/test_face.py`
 asserts it on every run so a model or preprocessing change cannot quietly erode
-it.
+it. Two images is an illustration rather than evidence, though — for the
+measured version, see [§5](#5--calibration--what-the-threshold-actually-costs).
 
 ### 2 · Identification — turning a face into a name
 
@@ -296,6 +298,81 @@ prices the deployment transaction, and stops at `insufficient funds` with an
 unfunded key. Fund a throwaway address from an Amoy faucet and it deploys for
 real — that is the only step that needs a human.
 
+### 5 · Calibration — what the threshold actually costs
+
+Every claim this tool makes rests on one number: the cosine similarity above
+which two faces are called the same person. 0.38 for ArcFace is the figure the
+literature supports, but "the figure the literature supports" is not evidence,
+and a reader cannot tell it apart from a number tuned until the demo worked.
+
+`sigil calibrate` measures it, on your machine, against two real populations.
+
+```bash
+sigil calibrate --limit 200      # measure and save
+sigil calibrate --show           # reprint the last measurement
+```
+
+**Impostor pairs come free.** Every pair of distinct Wikidata humans in the
+identity index is a pair of different people, and 3,583 identities make
+6,417,153 such pairs. The false-positive rate at any threshold is a count over
+that entire set — no sampling, no extrapolation.
+
+**Genuine pairs are harvested.** The index keeps one portrait per person, so it
+has no same-person pairs. But different language Wikipedias illustrate the same
+person with *different photographs*, which is a real second capture — different
+year, angle and lighting — still labelled by Wikidata rather than by this code.
+Fifteen Wikipedias yield about eleven distinct portraits per person.
+
+Measured over 60 sampled identities on the insightface backend:
+
+| | pairs | mean | sd | median | max |
+|---|---|---|---|---|---|
+| same person | 320 | 0.6211 | 0.1631 | 0.6211 | 0.9941 |
+| different people | 6,417,153 | 0.0048 | 0.0582 | 0.0035 | 1.0000 |
+
+| at threshold 0.380 | |
+|---|---|
+| true positive rate | **94.69%** of same-person pairs caught |
+| false positive rate | **2.836 × 10⁻⁵** — 1 in 35,259 |
+| equal error rate | 0.58%, at threshold 0.17 |
+| threshold for a 10⁻⁶ false-accept rate | 0.5872 |
+
+So 0.38 is well to the strict side of the equal-error point: it gives up recall
+to buy a much lower false-accept rate, which is the right way round for a tool
+that puts a name to a stranger.
+
+**Three findings worth more than the headline numbers.**
+
+*The impostor tail is bad data, not a bad model.* The closest "different
+people" pairs are `G. D. Agrawal` vs `गुरुदास अग्रवाल` at 1.0000 — one man under
+two Wikidata entities — and `Chhatrapati Shivaji Maharaj` vs `Soyarabai` at
+1.0000, which is one painting used to illustrate two historical figures. Next
+down are Mehmed II vs Suleiman the Magnificent at 0.6456: two Ottoman sultans
+painted in one studio style. The report prints these pairs rather than
+discarding them, because the real false-positive rate is *better* than the
+measured one and only the named pairs show why.
+
+*The genuine set needs an era filter, and the number proves it.* Without one,
+the hardest same-person pairs were every combination of portraits of Alexander
+the Great — a Roman bust against a Pompeian mosaic against a coin. Scoring a
+face recogniser on those measures whether two sculptors agreed. Restricting
+genuine pairs to people born after 1900 moved the true-positive rate from
+74.18% to 94.69% and the equal error rate from 6.33% to 0.58%. `--born-after 0`
+turns the filter off if you want to see it for yourself.
+
+*The hard cases are the ones you would predict.* With the filter on, the lowest
+genuine similarities are people photographed decades apart — Al Pacino at
+0.2431, Andre Agassi at 0.2455 — which is age, not error, and is exactly what a
+threshold this strict is choosing to miss.
+
+Two caveats the report repeats every run, because they cut in opposite
+directions: some cross-language portraits are crops of one file rather than a
+separate photograph, which flatters the true-positive rate (byte-identical
+files are dropped, which catches the easiest case and not the rest); and the
+subject of a lead image is taken to be its largest face, which is wrong for the
+occasional group photo and depresses it. Neither is corrected by hand, because
+a hand-corrected set is not a measurement.
+
 ---
 
 ## Verifying, and proving that verification bites
@@ -369,6 +446,7 @@ searches for people by face; it has no business being reachable from off-box.
 | `sigil serve` | 1–5 | local web UI, streaming the run live |
 | `sigil chain info` / `reset` | — | inspect or wipe the chain backend |
 | `sigil chain address` | — | show the submitter address and balance, deploying nothing |
+| `sigil calibrate` | — | measure what the threshold costs in false accepts and misses |
 | `sigil backends` | — | report which backends load, and what they run on |
 
 `sigil run` accepts a local path or an `https://` URL, and exits `0` on a
@@ -385,7 +463,7 @@ verifying against new probes — pick one and keep it).
 ## Tests
 
 ```bash
-pytest -m "not network"   # 237 offline tests, 93% line coverage
+pytest -m "not network"   # 292 offline tests, 93% line coverage
 pytest -m network         # 3 tests against the live API and a live chain
 ```
 
