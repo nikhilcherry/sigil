@@ -197,3 +197,71 @@ def test_the_anchored_candidate_is_shown_even_when_it_is_outside_the_top_few():
     out = cap.get()
     assert "aoc" in out, "the anchored candidate was not shown at all"
     assert "◀" in out
+
+
+def _scored_for_report(sim, faces, bbox, photo=0.02, kind="social"):
+    from sigil.search.base import Candidate
+    from sigil.search.matcher import ScoredCandidate
+
+    return ScoredCandidate(
+        candidate=Candidate(
+            platform="bluesky", image_url="https://i", post_url="https://p",
+            post_uri="at://p", author_handle="who", author_did="",
+            author_display_name="Who", text="", created_at="",
+            discovered_via="v", source_kind=kind),
+        similarity=sim, image_sha256="ab" * 32, faces_in_image=faces,
+        matched_bbox=bbox, photo_similarity=photo, rank=1)
+
+
+def test_the_match_panel_says_when_the_matched_image_was_a_group_photo(evidence):
+    """A match in a twelve-person photo means less than the same score alone.
+
+    The calibration section names exactly that as a source of error, so the
+    match panel should not let a reader assume a headshot.
+    """
+    from sigil.report import console, match_panel
+
+    with console.capture() as cap:
+        match_panel(evidence, _scored_for_report(0.76, 5, [10, 20, 60, 80]))
+    out = cap.get()
+    assert "faces in that image" in out
+    assert "group photo" in out
+    assert "[10, 20, 60, 80]" in out
+
+
+def test_the_match_panel_does_not_cry_group_photo_over_a_portrait(evidence):
+    from sigil.report import console, match_panel
+
+    with console.capture() as cap:
+        match_panel(evidence, _scored_for_report(0.76, 1, [10, 20, 60, 80]))
+    out = cap.get()
+    assert "faces in that image" in out
+    assert "group photo" not in out
+
+
+def test_the_match_panel_still_works_with_no_scored_candidate(evidence):
+    """`sigil verify` renders a bundle it did not search for."""
+    from sigil.report import console, match_panel
+
+    with console.capture() as cap:
+        match_panel(evidence)
+    out = cap.get()
+    assert "Match found" in out
+    assert "faces in that image" not in out
+
+
+def test_the_candidate_table_marks_multi_face_images_without_a_column():
+    """A column of "1" would wrap the table and say nothing."""
+    from sigil.report import console, search_panel
+    from sigil.search.matcher import MatchResult
+
+    one = _scored_for_report(0.90, 1, [0, 0, 1, 1])
+    many = _scored_for_report(0.80, 4, [0, 0, 1, 1])
+    many.rank = 2
+    result = MatchResult(best=one, ranked=[one, many])
+
+    with console.capture() as cap:
+        search_panel(result, 0.38, ["bluesky"])
+    out = cap.get()
+    assert "·4" in out, "a multi-face candidate is not marked"
+    assert "·1" not in out, "single-face candidates should not be marked"

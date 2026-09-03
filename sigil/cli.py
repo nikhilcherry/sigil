@@ -135,7 +135,7 @@ def run(image, query, backend, threshold, max_images, chain_backend, no_anchor, 
     if not result.found:
         report.no_match_panel(result.match, cfg.threshold_for(result.probe_ref.backend))
         sys.exit(2)
-    report.match_panel(result.evidence)
+    report.match_panel(result.evidence, result.match.best)
 
     _write_evidence(result.evidence, out)
     console.print(f"[dim]evidence bundle written to {out}[/dim]")

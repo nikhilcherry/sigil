@@ -81,7 +81,11 @@ def search_panel(result, threshold: float, providers: list[str]) -> None:
             ("[bold]" + str(i) + " ◀[/bold]"
              if anchored and s.image_sha256 == anchored else str(i)),
             Text(f"{s.similarity:.4f}", style="bold green" if hit else "yellow"),
-            Text("different photo" if identity else "same photo",
+            # The face count only earns space when it is not 1, which is the
+            # overwhelming majority - a column of "1" would wrap the table and
+            # tell a reader nothing.
+            Text(("different photo" if identity else "same photo")
+                 + (f" ·{s.faces_in_image}" if s.faces_in_image > 1 else ""),
                  style="green" if identity else "yellow"),
             s.candidate.author_handle or s.candidate.platform,
             s.candidate.discovered_via.replace("app.bsky.", ""),
@@ -94,7 +98,16 @@ def search_panel(result, threshold: float, providers: list[str]) -> None:
                       "republished.[/dim]")
 
 
-def match_panel(evidence) -> None:
+def match_panel(evidence, scored=None) -> None:
+    """Render the anchored match.
+
+    ``scored`` is the ScoredCandidate behind it, when the caller has it. It
+    carries two facts the evidence bundle does not: how many faces were in the
+    matched image and which one matched. A match in a twelve-person group photo
+    means less than the same score on a portrait, and the calibration section
+    names exactly that as a source of error - so it is worth saying rather than
+    leaving the reader to assume a headshot.
+    """
     m = evidence.match
     t = Table.grid(padding=(0, 2))
     t.add_column(style="dim", justify="right")
@@ -116,6 +129,13 @@ def match_panel(evidence) -> None:
                            "probe's own photograph, published here[/dim]")
     t.add_row("picture vs probe", f"{m.probe_photo_similarity:.4f} "
                                   f"[dim](whole image, no face model)[/dim]")
+    if scored is not None and scored.faces_in_image:
+        faces = scored.faces_in_image
+        where = f" [dim]at {scored.matched_bbox}[/dim]" if scored.matched_bbox else ""
+        t.add_row("faces in that image",
+                  (f"{faces}{where}" if faces == 1 else
+                   f"[yellow]{faces}[/yellow]{where} [dim]— a group photo, so the "
+                   f"match is one face among several[/dim]"))
     t.add_row("evidence hash", evidence.evidence_hash_hex())
     rates = _measured_rates(evidence)
     if rates:
