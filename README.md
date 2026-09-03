@@ -709,6 +709,7 @@ searches for people by face; it has no business being reachable from off-box.
 | `sigil tamper` | — | produce an altered bundle to prove verification fails |
 | `sigil serve` | 1–5 | local web UI, streaming the run live |
 | `sigil chain info` / `reset` | — | inspect or wipe the chain backend |
+| `sigil chain records` | 5 | list what the registry holds, read from chain state |
 | `sigil chain address` | — | show the submitter address and balance, deploying nothing |
 | `sigil calibrate` | — | measure what the threshold costs in false accepts and misses |
 | `sigil backends` | — | report which backends load, and what they run on |
@@ -727,7 +728,7 @@ verifying against new probes — pick one and keep it).
 ## Tests
 
 ```bash
-pytest -m "not network"   # 432 offline tests, 96% line coverage
+pytest -m "not network"   # 438 offline tests, 96% line coverage
 pytest -m network         # 3 tests against the live API and a live chain
 ```
 

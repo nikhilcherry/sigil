@@ -427,3 +427,31 @@ class ChainClient:
     def total_anchored(self) -> int:
         self.ensure_deployed()
         return int(self.contract.functions.total().call())
+
+    def anchored_records(self, limit: int | None = None) -> list[dict[str, Any]]:
+        """Every record in the registry, oldest first.
+
+        The contract has always exposed `hashAt` for this - it is what makes
+        `total()` more than a number - and nothing called it, so the registry
+        could report that it held N records without being able to say which.
+        A reader checking a claim against the chain needs the second half.
+
+        Read one index at a time because that is the interface the contract
+        offers; for the volumes this is built for (see the note in
+        chain/local.py) that is fine, and `limit` bounds it for the rest.
+        """
+        self.ensure_deployed()
+        total = self.total_anchored()
+        count = total if limit is None else min(total, limit)
+        out: list[dict[str, Any]] = []
+        for index in range(count):
+            digest = self.contract.functions.hashAt(index).call()
+            record = self.lookup(digest)
+            if record is None:
+                # A hash in the array with no record would mean the contract's
+                # two stores disagree, which it is written to make impossible.
+                continue
+            out.append({"index": index,
+                        "evidence_hash": "0x" + bytes(digest).hex(),
+                        **record})
+        return out

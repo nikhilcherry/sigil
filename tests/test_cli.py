@@ -525,3 +525,20 @@ def test_serve_passes_an_explicit_bind_through(monkeypatch):
     assert seen["host"] == "0.0.0.0"  # noqa: S104
     assert seen["port"] == 9000
     assert seen["open_browser"] is True
+
+
+def test_chain_records_lists_what_is_anchored(evidence, cfg, tmp_path):
+    """`chain info` says how many; this says which."""
+    ChainClient(cfg).anchor(evidence)
+
+    result = CliRunner().invoke(cli, ["chain", "records"])
+    assert result.exit_code == 0, result.output
+    assert "Registry contents" in result.output
+    assert evidence.evidence_hash_hex()[:20] in result.output
+
+
+def test_chain_records_on_an_empty_registry_explains_rather_than_erroring(cfg):
+    result = CliRunner().invoke(cli, ["chain", "records"])
+    assert result.exit_code == 0, result.output
+    assert "registry is empty" in result.output
+    assert "Traceback" not in result.output

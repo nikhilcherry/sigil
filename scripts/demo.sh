@@ -72,6 +72,7 @@ else
 fi
 
 run chain info
+run chain records
 
 # The threshold everything above rests on, measured rather than asserted.
 # --show reads the cached measurement, so this is instant; a fresh clone has

@@ -301,6 +301,25 @@ def chain_info(chain_backend):
     console.print(Panel(t, title="Chain", border_style="magenta", expand=False))
 
 
+@chain.command("records")
+@click.option("--chain", "chain_backend", type=click.Choice(["local", "rpc"]), default=None)
+@click.option("-n", "--limit", type=int, default=20, show_default=True,
+              help="How many records to list, oldest first.")
+def chain_records(chain_backend, limit):
+    """List what the registry actually holds, read back from chain state.
+
+    `chain info` reports how many records exist; this reports which. Everything
+    shown here is read from the contract rather than from any local file - the
+    evidence hashes come from the registry's own array.
+    """
+    cfg = _cfg(chain_backend=chain_backend)
+    with _chain_errors():
+        client = ChainClient(cfg)
+        rows = client.anchored_records(limit=limit)
+        total = client.total_anchored()
+    report.records_table(rows, total)
+
+
 @chain.command("address")
 @click.option("--chain", "chain_backend", type=click.Choice(["local", "rpc"]), default=None)
 def chain_address(chain_backend):

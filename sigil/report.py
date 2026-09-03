@@ -395,3 +395,32 @@ def calibration_panel(c) -> None:
         "duplicate entities and all - which is what a probe is really compared "
         "against.[/dim]",
         title="What this argues", border_style="cyan", expand=False))
+
+
+def records_table(rows: list[dict[str, Any]], total: int) -> None:
+    """What the registry holds, read back from chain state rather than a log."""
+    if not rows:
+        console.print(Panel(
+            "The registry is empty. `sigil run` anchors a record; nothing is "
+            "anchored when nothing matched.",
+            title="Chain records", border_style="yellow", expand=False))
+        return
+
+    t = Table(title=f"Registry contents · {total} record(s) anchored",
+              header_style="bold", border_style="dim")
+    t.add_column("#", justify="right", style="dim")
+    t.add_column("evidence hash")
+    t.add_column("similarity", justify="right")
+    t.add_column("submitter", style="dim")
+    t.add_column("anchored at", justify="right", style="dim")
+    for r in rows:
+        t.add_row(
+            str(r["index"]),
+            r["evidence_hash"][:22] + "…",
+            f"{r['similarity_bps'] / 10000:.4f}",
+            r["submitter"][:12] + "…",
+            str(r["anchored_at"]),
+        )
+    console.print(t)
+    if len(rows) < total:
+        console.print(f"[dim]showing {len(rows)} of {total}; -n to see more[/dim]")

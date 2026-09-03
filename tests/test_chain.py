@@ -618,3 +618,68 @@ def test_a_matching_probe_says_nothing_about_providers(cfg, evidence):
         evidence, probe_embedding_sha256=evidence.probe.embedding_sha256)
     assert v.probe_matches is True
     assert not any("provider" in n for n in v.notes)
+
+
+# ------------------------------------------------ enumerating the registry
+
+
+def _second_bundle(evidence, marker):
+    """Another anchorable bundle, differing only where the hash will notice."""
+    from sigil.evidence import Evidence
+
+    d = evidence.to_dict()
+    d["match"]["text"] = marker
+    return Evidence.from_dict(d)
+
+
+def test_the_registry_can_say_which_records_it_holds_not_just_how_many(cfg,
+                                                                      evidence):
+    """`hashAt` had always been deployed and never called.
+
+    So the chain could report that it held N records without being able to
+    name one, and a reader checking a claim against chain state needs the
+    second half of that.
+    """
+    client = ChainClient(cfg)
+    first = client.anchor(evidence)
+    second_ev = _second_bundle(evidence, "a different post")
+    client.anchor(second_ev)
+
+    rows = client.anchored_records()
+    assert client.total_anchored() == 2
+    assert [r["index"] for r in rows] == [0, 1], "not in anchoring order"
+    assert rows[0]["evidence_hash"] == evidence.evidence_hash_hex()
+    assert rows[1]["evidence_hash"] == second_ev.evidence_hash_hex()
+    # Everything came off the chain, so it agrees with the anchor receipts.
+    assert rows[0]["submitter"] == client.address
+    assert rows[0]["similarity_bps"] == evidence.similarity_bps()
+    assert first["already_anchored"] is False
+
+
+def test_an_empty_registry_lists_nothing_rather_than_failing(cfg):
+    assert ChainClient(cfg).anchored_records() == []
+    assert ChainClient(cfg).total_anchored() == 0
+
+
+def test_the_listing_is_bounded_by_the_limit(cfg, evidence):
+    client = ChainClient(cfg)
+    for i in range(4):
+        client.anchor(_second_bundle(evidence, f"post {i}"))
+
+    assert client.total_anchored() == 4
+    assert len(client.anchored_records(limit=2)) == 2
+    assert len(client.anchored_records(limit=99)) == 4
+    assert len(client.anchored_records(limit=0)) == 0
+
+
+def test_every_listed_record_verifies_against_its_own_bundle(cfg, evidence):
+    """The point of the listing: what is on chain matches what is in hand."""
+    client = ChainClient(cfg)
+    bundles = [_second_bundle(evidence, f"post {i}") for i in range(3)]
+    for b in bundles:
+        client.anchor(b)
+
+    listed = {r["evidence_hash"] for r in client.anchored_records()}
+    for b in bundles:
+        assert b.evidence_hash_hex() in listed
+        assert ChainClient(cfg).verify(b).ok
