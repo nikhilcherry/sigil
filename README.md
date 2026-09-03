@@ -504,6 +504,10 @@ pytest -m "not network"   # 318 offline tests, 93% line coverage
 pytest -m network         # 3 tests against the live API and a live chain
 ```
 
+CI runs the offline suite on 3.10, 3.11, 3.12 and 3.13. 3.10 is there because
+it is the floor `pyproject.toml` declares, and a declared floor nobody runs is
+a guess rather than a claim.
+
 The network tests are deliberate. The realistic failure mode of this project is
 not a logic bug — it is Bluesky changing a response shape or an auth
 requirement. A green offline suite over a broken search is exactly what needs
