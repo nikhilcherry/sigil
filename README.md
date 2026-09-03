@@ -723,6 +723,10 @@ on yourself, on a consenting subject, or on a public figure for a demonstration.
   three probes: a private individual (no account, no match), a public figure
   with a parked handle and no posts (named correctly from the index, still no
   match), and one with an active account (named, matched, anchored).
+  Re-checked on 2026-09-03 from the keyless clone: the committed control image
+  against a nonsense query examined 179 images, topped out at 0.2992 against
+  the 0.363 opencv threshold, anchored nothing, and exited 2 — which is the
+  documented code for "nothing cleared", not for an error.
 
 - **Search breadth is bounded by cost, not capability.** `SIGIL_MAX_IMAGES`
   defaults to 200. Raising it widens recall and lengthens runtime roughly
