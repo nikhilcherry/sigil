@@ -13,6 +13,7 @@ from sigil.config import Config
 from sigil.face import load_encoder
 from sigil.pipeline import run_pipeline, scan_probe
 from sigil.search.bluesky import BlueskyProvider
+from sigil.search.matcher import pick_best
 from tests.conftest import EXAMPLE_PROBE
 
 pytestmark = pytest.mark.network
@@ -72,9 +73,13 @@ def test_full_pipeline_finds_and_anchors_a_real_match(cfg_live, tmp_path, monkey
         "the keyless arm did not run"
     )
     assert ev.similarity >= ev.threshold
-    assert ev.similarity == result.match.ranked[0].similarity, (
-        "the anchored match is not the top-ranked one"
-    )
+    # Not the top of the table: an identity claim on a social source outranks a
+    # higher cosine on the probe's own picture republished. Asserted against
+    # the selector rather than restated, so the two cannot drift apart.
+    assert result.match.best is pick_best(result.match.ranked, ev.threshold)
+    assert ev.match.claim in ("identity", "provenance")
+    assert -1.0 <= ev.match.probe_photo_similarity <= 1.0
+    assert ev.match.source_kind in ("social", "web")
     assert result.anchor["already_anchored"] is False
     assert result.verification.ok
 
