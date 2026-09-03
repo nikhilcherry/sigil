@@ -41,6 +41,10 @@ class ScoredCandidate:
     # How close the whole picture is to the probe's, judged without the face
     # model. See sigil/provenance.py.
     photo_similarity: float = 0.0
+    # Position by raw face similarity across every candidate scored, not just
+    # the ones kept for the report. The anchored match is routinely outside the
+    # top 20, so its real rank has to travel with it.
+    rank: int = 0
 
     @property
     def claim(self) -> str:
@@ -266,8 +270,18 @@ def search_and_match(
     # The table stays ranked by raw face similarity, because that is what the
     # model said and hiding it would be the dishonest part.
     scored.sort(key=lambda s: s.similarity, reverse=True)
-    result.ranked = scored[:20]
+    for position, candidate in enumerate(scored, 1):
+        candidate.rank = position
+
     result.best = pick_best(scored, threshold)
+    result.ranked = scored[:20]
+    # The anchored candidate is kept whatever its rank. Preferring a social
+    # identity claim over a higher cosine routinely selects something well
+    # outside the top 20 - the live AOC avatar sits past 30 behind a wall of
+    # republications - and a report that names an anchored match it cannot
+    # show contradicts itself on screen.
+    if result.best is not None and result.best not in result.ranked:
+        result.ranked.append(result.best)
 
     result.trace = [
         {"provider": p.name, "calls": p.trace.calls} for p in providers if hasattr(p, "trace")

@@ -104,7 +104,7 @@ class BlueskyProvider:
         for url in self._images_from_post(post):
             yield Candidate(
                 platform="bluesky",
-                        source_kind="social",
+                source_kind="social",
                 image_url=url,
                 post_url=at_uri_to_web_url(post.get("uri", ""), handle),
                 post_uri=post.get("uri", ""),
@@ -139,31 +139,36 @@ class BlueskyProvider:
         def fetch_feed(actor: dict) -> dict | None:
             return self._get("app.bsky.feed.getAuthorFeed", feed_params(actor))
 
+        # Every avatar first, across all actors, before any feed image.
+        # Measured on a real run: 53% of avatars contain a detectable face
+        # against 20% of feed images, and the strongest live match in every run
+        # so far has been an avatar - it is the one picture an account chooses
+        # to represent a person by. They also cost nothing extra, since
+        # searchActors already returned them, so ordering them first is free
+        # recall for any run whose budget is smaller than what Bluesky offers.
+        # Which is every run: `max_images` defaults to 200 and 25 actors at 20
+        # posts each can propose ten times that.
+        for actor in actors:
+            if actor.get("avatar"):
+                yield Candidate(
+                    platform="bluesky",
+                    source_kind="social",
+                    image_url=actor["avatar"],
+                    post_url=f"https://bsky.app/profile/{actor.get('handle', '')}",
+                    post_uri=f"at://{actor.get('did', '')}/app.bsky.actor.profile/self",
+                    author_handle=actor.get("handle", ""),
+                    author_did=actor.get("did", ""),
+                    author_display_name=actor.get("displayName", "") or "",
+                    text=(actor.get("description") or "")[:500],
+                    created_at=actor.get("createdAt", "") or "",
+                    discovered_via="app.bsky.actor.searchActors:avatar",
+                )
+
         # The feeds are fetched concurrently but consumed in actor order, and
         # the trace is written here rather than in the workers, so both the
         # candidate stream and the audit record stay identical to a serial run.
         with ThreadPoolExecutor(max_workers=FEED_WORKERS) as pool:
             for actor, feed in prefetch(pool, actors, fetch_feed, FEED_WORKERS * 2):
-                handle = actor.get("handle", "")
-                did = actor.get("did", "")
-                display = actor.get("displayName", "") or ""
-
-                # A profile avatar is the highest-signal face an account exposes.
-                if actor.get("avatar"):
-                    yield Candidate(
-                        platform="bluesky",
-                        source_kind="social",
-                        image_url=actor["avatar"],
-                        post_url=f"https://bsky.app/profile/{handle}",
-                        post_uri=f"at://{did}/app.bsky.actor.profile/self",
-                        author_handle=handle,
-                        author_did=did,
-                        author_display_name=display,
-                        text=(actor.get("description") or "")[:500],
-                        created_at=actor.get("createdAt", "") or "",
-                        discovered_via="app.bsky.actor.searchActors:avatar",
-                    )
-
                 items = (feed or {}).get("feed", [])
                 self.trace.record("app.bsky.feed.getAuthorFeed", feed_params(actor), len(items))
                 for item in items:

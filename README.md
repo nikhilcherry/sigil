@@ -80,15 +80,19 @@ Stage 2/5 · Web / social search
   duplicate images    17  (score reused)
   live API calls      10
 
-  #   similarity   claim            account                  found via
-  1       0.9952   same photo       www.influencewatch.org   vision:pagesWithMatching
-  2       0.9935   same photo       aflcio.org               vision:pagesWithMatching
-  3       0.9892   different photo  images.squarespace-cdn   vision:fullMatchingImages
-  9 ◀     0.7596   different photo  aoc.bsky.social          actor.searchActors:avatar
+   #    similarity   claim            account                  found via
+   1        0.9952   same photo       www.influencewatch.org   vision:pagesWithMatching
+   2        0.9935   same photo       aflcio.org               vision:pagesWithMatching
+   6        0.9892   different photo  images.squarespace-cdn   vision:fullMatchingImages
+  70 ◀      0.7596   different photo  aoc.bsky.social          actor.searchActors:avatar
 
   ◀ anchored. A social post outranks an open-web page, and a different
     photograph of the same face outranks a higher cosine on the probe's own
     picture republished.
+
+Sixty-nine candidates score higher by raw cosine and every one of them is the
+probe's own photograph on someone else's page. The anchored match is the one
+account that posted a *different* picture of that face.
 
 Stage 3/5 · Face match          0.7596  (threshold 0.380, identity claim)
 Stage 4/5 · Blockchain anchor   tx 0x9c202d06…  block 2  gas 114,222

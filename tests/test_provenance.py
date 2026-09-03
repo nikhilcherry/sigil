@@ -256,3 +256,91 @@ def test_within_social_candidates_an_independent_photo_still_wins():
     repost = _scored(0.99, 0.995, "reposter", kind="social")
     avatar = _scored(0.76, 0.12, "aoc", kind="social")
     assert pick_best([repost, avatar], threshold=0.38) is avatar
+
+
+def test_the_anchored_candidate_survives_the_top_twenty_cut(monkeypatch):
+    """It is routinely outside it, which is the point of the preference.
+
+    `ranked` keeps only 20 for the report, but `pick_best` looks at every
+    candidate - so the selected one could be dropped from the very list the
+    report renders, leaving a run that names a match it cannot show.
+    """
+    import sigil.search.matcher as m
+    from sigil.config import Config
+    from sigil.face import Face
+
+    monkeypatch.setattr(m, "fetch_image", lambda s, u, t: u.encode())
+
+    # Thirty web republications, then one social avatar that scores lower.
+    def scores(e, p, blob, fp=None):
+        url = blob.decode()
+        if url == "https://avatar":
+            return 0.7596, 1, [0, 0, 1, 1], 0.02
+        return 0.99, 1, [0, 0, 1, 1], 0.999
+
+    monkeypatch.setattr(m, "score_image", scores)
+
+    class Provider:
+        name = "stub"
+        kind = "mixed"
+
+        def __init__(self):
+            from sigil.search.base import ProviderTrace
+
+            self.trace = ProviderTrace(provider=self.name)
+
+        def candidates(self, query):
+            for i in range(30):
+                yield Candidate(
+                    platform="web", image_url=f"https://copy{i}",
+                    post_url="https://p", post_uri="p", author_handle=f"c{i}",
+                    author_did="", author_display_name="", text="",
+                    created_at="", discovered_via="v", source_kind="web")
+            yield Candidate(
+                platform="bluesky", image_url="https://avatar",
+                post_url="https://p", post_uri="p", author_handle="aoc",
+                author_did="", author_display_name="", text="",
+                created_at="", discovered_via="v", source_kind="social")
+
+    cfg = Config()
+    cfg.max_images = 40
+    probe = Face(embedding=np.array([1.0, 0.0], dtype=np.float32),
+                 bbox=[0, 0, 1, 1], det_score=0.9)
+    result = m.search_and_match(OneFace(), probe, [Provider()], "q", 0.38, cfg)
+
+    assert result.best.candidate.author_handle == "aoc"
+    assert result.best in result.ranked, "the anchored candidate was cut"
+    assert result.best.rank > 20, "this test no longer exercises the cut"
+
+
+def test_every_candidate_carries_its_rank_among_all_of_them(monkeypatch):
+    import sigil.search.matcher as m
+    from sigil.config import Config
+    from sigil.face import Face
+
+    monkeypatch.setattr(m, "fetch_image", lambda s, u, t: u.encode())
+    sims = {f"https://c{i}": 0.9 - i / 100 for i in range(5)}
+    monkeypatch.setattr(m, "score_image",
+                        lambda e, p, b, fp=None: (sims[b.decode()], 1, [], 0.0))
+
+    class Provider:
+        name = "stub"
+
+        def __init__(self):
+            from sigil.search.base import ProviderTrace
+
+            self.trace = ProviderTrace(provider=self.name)
+
+        def candidates(self, query):
+            for i in range(5):
+                yield Candidate(
+                    platform="web", image_url=f"https://c{i}",
+                    post_url="p", post_uri="p", author_handle=f"c{i}",
+                    author_did="", author_display_name="", text="",
+                    created_at="", discovered_via="v")
+
+    probe = Face(embedding=np.array([1.0, 0.0], dtype=np.float32),
+                 bbox=[0, 0, 1, 1], det_score=0.9)
+    result = m.search_and_match(OneFace(), probe, [Provider()], "q", 0.38,
+                                Config())
+    assert [s.rank for s in result.ranked] == [1, 2, 3, 4, 5]

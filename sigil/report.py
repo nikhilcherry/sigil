@@ -60,12 +60,16 @@ def search_panel(result, threshold: float, providers: list[str]) -> None:
     anchored = result.best.image_sha256 if result.best else None
     # The anchored candidate is often not in the top few - that is the whole
     # point of the preference - so it is pulled in rather than left off the
-    # only table the run prints.
-    shown = list(enumerate(result.ranked, 1))[:8]
-    if anchored and not any(s.image_sha256 == anchored for _, s in shown):
-        shown += [(i, s) for i, s in enumerate(result.ranked, 1)
-                  if s.image_sha256 == anchored][:1]
-    for i, s in shown:
+    # only table the run prints. Its number is its real rank among everything
+    # scored, which is why that rank travels on the candidate.
+    shown = result.ranked[:8]
+    marked = any(s.image_sha256 == anchored for s in shown) if anchored else False
+    if anchored and not marked:
+        extra = [s for s in result.ranked if s.image_sha256 == anchored][:1]
+        shown = shown + extra
+        marked = bool(extra)
+    for s in shown:
+        i = s.rank or (result.ranked.index(s) + 1)
         hit = s.similarity >= threshold
         # "same photo" is the honest label for a reverse-image hit: the cosine
         # is near 1.0 because it is the probe's own picture, not because the
@@ -81,7 +85,7 @@ def search_panel(result, threshold: float, providers: list[str]) -> None:
             s.candidate.discovered_via.replace("app.bsky.", ""),
         )
     console.print(tbl)
-    if anchored:
+    if marked:
         console.print("[dim]◀ anchored. A social post outranks an open-web "
                       "page, and a different photograph of the same face "
                       "outranks a higher cosine on the probe's own picture "

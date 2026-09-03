@@ -564,6 +564,14 @@ let anchoredUrl = null;
 
 function renderSheet(){
   const top = cands.slice(0, 36);
+  // The anchored tile is pulled in whatever its rank. A social identity claim
+  // beats a higher cosine, so it routinely sits well past 36 - on the demo
+  // probe it is 70th - and a grid that cannot show the tile the panel below
+  // describes contradicts itself on screen.
+  if (anchoredUrl && !top.some(x => x.image_url === anchoredUrl)){
+    const it = cands.find(x => x.image_url === anchoredUrl);
+    if (it) top.push(it);
+  }
   $("sheet").innerHTML = top.map(x => {
     const copy = x.claim === "provenance";
     const mine = anchoredUrl && x.image_url === anchoredUrl;
