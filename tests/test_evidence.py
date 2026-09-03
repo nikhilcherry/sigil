@@ -250,3 +250,88 @@ def test_the_subject_commitment_is_scoped_to_the_provider_not_just_the_face(
     # And it is a pure function of (digest, salt), so the same pair always
     # recomputes - which is what makes it checkable at all.
     assert subject_ref(on_cpu, salt) == subject_ref(on_cpu, salt)
+
+
+# ------------------------------------------------------------ golden vector
+
+# A fully-specified bundle and the exact bytes and hash it must produce. Every
+# claim this project makes rests on that hash being reproducible, and nothing
+# was pinning it - three schema changes in one afternoon altered every hash the
+# project can produce and no test noticed.
+#
+# This is deliberately brittle. If it fails, one of two things happened: the
+# canonical serialisation drifted, which is a bug, or a field was added or
+# renamed, which is a schema change - and then SCHEMA in sigil/__init__.py has
+# to move too, and this vector is updated in the same commit that moves it.
+# Failing loudly is the whole point.
+GOLDEN_SCHEMA = "sigil/evidence/v3"
+GOLDEN_BYTES = 1140
+GOLDEN_HASH = "0xc9a63a787a43bb17c9cc19630a6ad6b9a69a4cc6b2416e9427bcf691e095011f"
+GOLDEN_SUBJECT = "0xe6a4852f797e1005246089aba3e37c853555f5adcdcfd8fdd5b767a6dee20276"
+
+
+def _golden_bundle():
+    from sigil.evidence import MatchRef, ProbeRef
+
+    return Evidence(
+        probe=ProbeRef(
+            image_sha256="ab" * 32, embedding_sha256="cd" * 32,
+            backend="insightface", model="buffalo_l/w600k_r50",
+            bbox=[10, 20, 110, 140], det_score=0.9312,
+            provider="CPUExecutionProvider"),
+        match=MatchRef(
+            platform="bluesky",
+            post_url="https://bsky.app/profile/who.bsky.social/post/3abc",
+            post_uri="at://did:plc:example/app.bsky.feed.post/3abc",
+            author_handle="who.bsky.social", author_did="did:plc:example",
+            author_display_name="Someone", text="a post with a photo",
+            image_url="https://cdn.bsky.app/img/feed_fullsize/plain/x/y",
+            image_sha256="ef" * 32, created_at="2026-08-01T12:00:00Z",
+            discovered_via="app.bsky.actor.searchActors:avatar",
+            probe_photo_similarity=0.021300, claim="identity",
+            source_kind="social"),
+        similarity=0.759554, threshold=0.38,
+        searched_at="2026-09-03T00:00:00Z",
+        search_trace=[{"provider": "bluesky", "calls": [
+            {"endpoint": "app.bsky.actor.searchActors",
+             "params": {"q": "AOC", "limit": 25}, "results": 25}]}],
+    )
+
+
+def test_a_known_bundle_hashes_to_a_known_value():
+    """The project's central invariant, pinned.
+
+    If this fails: either the canonical serialisation drifted, which is a bug,
+    or a field changed, which is a schema change - and then SCHEMA moves in the
+    same commit as this vector.
+    """
+    ev = _golden_bundle()
+    assert ev.schema == GOLDEN_SCHEMA
+    assert len(ev.canonical_json()) == GOLDEN_BYTES
+    assert ev.evidence_hash_hex() == GOLDEN_HASH
+
+
+def test_the_golden_bundle_survives_a_round_trip_through_json():
+    """Reading a bundle back must not change what it hashes to."""
+    ev = _golden_bundle()
+    back = Evidence.from_dict(json.loads(ev.canonical_json()))
+    assert back.canonical_json() == ev.canonical_json()
+    assert back.evidence_hash_hex() == GOLDEN_HASH
+
+
+def test_the_golden_bundle_commits_to_a_known_subject():
+    """The value that goes on chain, for the default salt."""
+    assert "0x" + subject_ref(
+        _golden_bundle().probe.embedding_sha256, "sigil-default-salt"
+    ).hex() == GOLDEN_SUBJECT
+
+
+def test_the_canonical_bytes_are_sorted_compact_and_utf8():
+    """The three properties the serialisation pins, checked directly."""
+    raw = _golden_bundle().canonical_json()
+    assert isinstance(raw, bytes)
+    assert b", " not in raw and b": " not in raw, "not compact"
+    text = raw.decode("utf-8")
+    keys = ("match", "probe", "schema", "searched_at", "similarity")
+    positions = [text.index(f'"{k}"') for k in keys]
+    assert positions == sorted(positions), "top-level keys are not sorted"
