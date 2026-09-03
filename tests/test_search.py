@@ -807,3 +807,73 @@ def test_progress_counts_every_image_not_only_the_ones_with_faces(monkeypatch):
     # Only the one real face becomes a candidate event.
     assert len([e for e in events if e["type"] == "candidate"]) == 1
     assert progress[-1]["scored"] == 1
+
+
+# ------------------------------------------------- how many images at once
+
+
+def test_download_workers_follow_the_encoder():
+    """The right count depends on which half of the run is slow.
+
+    On CPU the encoder is 97% of a run and extra sockets only queue bytes in
+    front of it. On GPU the encoder is ~12x faster, the run becomes
+    network-bound, and doubling the workers halved the search stage.
+    """
+    from sigil.search.matcher import (
+        DOWNLOAD_WORKERS,
+        GPU_DOWNLOAD_WORKERS,
+        download_workers,
+    )
+
+    class Enc:
+        def __init__(self, provider):
+            self.provider = provider
+
+    cfg = Config()
+    assert download_workers(Enc("CPUExecutionProvider"), cfg) == DOWNLOAD_WORKERS
+    assert download_workers(Enc("CUDAExecutionProvider"), cfg) == GPU_DOWNLOAD_WORKERS
+    assert GPU_DOWNLOAD_WORKERS > DOWNLOAD_WORKERS
+
+
+def test_an_encoder_that_reports_no_provider_gets_the_conservative_count():
+    """The opencv backend has no `provider` attribute at all."""
+    from sigil.search.matcher import DOWNLOAD_WORKERS, download_workers
+
+    class NoProvider:
+        pass
+
+    assert download_workers(NoProvider(), Config()) == DOWNLOAD_WORKERS
+
+
+def test_an_explicit_worker_count_overrides_the_encoder():
+    from sigil.search.matcher import download_workers
+
+    class Enc:
+        provider = "CUDAExecutionProvider"
+
+    cfg = Config()
+    cfg.download_workers = 3
+    assert download_workers(Enc(), cfg) == 3
+
+
+def test_the_worker_count_actually_reaches_the_pool(monkeypatch):
+    """A knob nothing reads is not a knob."""
+    import sigil.search.matcher as m
+
+    seen = {}
+    real_pool = m.ThreadPoolExecutor
+
+    class Spy(real_pool):
+        def __init__(self, max_workers=None, **kw):
+            seen["max_workers"] = max_workers
+            super().__init__(max_workers=max_workers, **kw)
+
+    monkeypatch.setattr(m, "ThreadPoolExecutor", Spy)
+    monkeypatch.setattr(m, "fetch_image", lambda s, u, t: b"x")
+    monkeypatch.setattr(m, "score_image", lambda e, p, b, fp=None: (0.9, 1, [], 0.0))
+
+    cfg = Config()
+    cfg.download_workers = 5
+    provider = FakeProvider([_candidate("https://a")])
+    search_and_match(FakeEncoder({}), _face([1, 0, 0]), [provider], "q", 0.38, cfg)
+    assert seen["max_workers"] == 5

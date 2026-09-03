@@ -75,6 +75,11 @@ class Config:
     posts_per_actor: int = field(default_factory=lambda: _env_int("SIGIL_POSTS_PER_ACTOR", 20))
     max_images: int = field(default_factory=lambda: _env_int("SIGIL_MAX_IMAGES", 200))
     http_timeout: float = field(default_factory=lambda: _env_float("SIGIL_HTTP_TIMEOUT", 20.0))
+    # 0 means "decide from the encoder": the right number depends on whether
+    # the run is inference-bound or network-bound. See search/matcher.py.
+    download_workers: int = field(
+        default_factory=lambda: _env_int("SIGIL_DOWNLOAD_WORKERS", 0)
+    )
     bluesky_handle: str | None = field(default_factory=lambda: os.getenv("BLUESKY_HANDLE"))
     bluesky_app_password: str | None = field(
         default_factory=lambda: os.getenv("BLUESKY_APP_PASSWORD")

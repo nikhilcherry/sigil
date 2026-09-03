@@ -668,7 +668,7 @@ verifying against new probes — pick one and keep it).
 ## Tests
 
 ```bash
-pytest -m "not network"   # 380 offline tests, 93% line coverage
+pytest -m "not network"   # 384 offline tests, 93% line coverage
 pytest -m network         # 3 tests against the live API and a live chain
 ```
 
@@ -781,14 +781,20 @@ on yourself, on a consenting subject, or on a public figure for a demonstration.
 
 - **Search breadth is bounded by cost, not capability.** `SIGIL_MAX_IMAGES`
   defaults to 200. Raising it widens recall and lengthens runtime roughly
-  linearly, because the run is essentially all inference: **97% of a run's CPU
-  is the detector**, against about 3% waiting on the network. A default run
-  with both arms enabled takes ~50 s on this CPU for 169 images. That ratio is
-  why raising the download worker count buys nothing, and why two plausible
-  optimisations were measured and rejected rather than adopted — a cheap
-  pre-filter in front of the detector (1.24×, and it costs recall) and a
-  fingerprint-keyed score cache (1.5×, and it is unsound). Both are written up
-  where someone would go looking to try them.
+  linearly. *What* it lengthens depends on the encoder. On CPU the run is
+  essentially all inference — **97% of it is the detector**, against about 3%
+  waiting on the network — and a default run with both arms enabled takes
+  ~50 s for 169 images. On GPU the detector is 12× faster and the balance
+  inverts: the same run is network-bound and takes ~16–23 s. The download
+  worker count follows the encoder for exactly that reason (8 on CPU, 16 on
+  CUDA, `SIGIL_DOWNLOAD_WORKERS` to override), which halved the search stage
+  on GPU and does nothing at all on CPU.
+
+  That CPU ratio is also why three plausible optimisations were measured and
+  rejected rather than adopted — a cheap pre-filter in front of the detector
+  (1.24×, and it costs recall), a fingerprint-keyed score cache (1.5×, and it
+  is unsound), and fetching smaller portraits for the index build (no faster at
+  all). Each is written up where someone would go looking to try it.
 - **SerpAPI needs a hosted probe.** Google Lens matches on a URL, so the
   open-web arm cannot run against a local file.
 

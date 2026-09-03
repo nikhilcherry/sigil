@@ -24,11 +24,36 @@ from ..provenance import IDENTITY, claim_for, fingerprint, photo_similarity
 from .base import Candidate
 from .http import fetch_image, make_session
 
+# How many candidate images to download at once. Two values, because the right
+# one depends on which half of the run is the slow half.
+#
+# On CPU the encoder is 97% of a run, so the network is never the constraint
+# and extra workers only queue bytes in front of a busy encoder. On GPU the
+# encoder is ~12x faster and the balance inverts - the run becomes
+# network-bound, and the same measurement that says "nothing" on CPU says a
+# great deal here. Measured over 100 real candidates with the encoder on CUDA:
+#
+#   8 workers   14.4s      16 workers   7.0s      24 workers   9.4s
+#
+# Identical candidates examined and identical top score in all three; 24 is
+# past the point where more sockets help. So the count follows the encoder,
+# and SIGIL_DOWNLOAD_WORKERS overrides it either way.
 DOWNLOAD_WORKERS = 8
+GPU_DOWNLOAD_WORKERS = 16
+
 # How many downloads may be in flight (or finished and waiting) ahead of the
 # encoder. Larger than the worker count on purpose: it is the read-ahead buffer
 # that keeps the encoder from ever waiting on the network.
-PREFETCH = DOWNLOAD_WORKERS * 3
+PREFETCH_FACTOR = 3
+PREFETCH = DOWNLOAD_WORKERS * PREFETCH_FACTOR
+
+
+def download_workers(encoder, cfg: Config) -> int:
+    """How many images to fetch at once, given what is doing the encoding."""
+    if getattr(cfg, "download_workers", None):
+        return cfg.download_workers
+    provider = getattr(encoder, "provider", "") or ""
+    return GPU_DOWNLOAD_WORKERS if "CUDA" in provider else DOWNLOAD_WORKERS
 
 
 @dataclass
@@ -205,8 +230,9 @@ def search_and_match(
     # already saturates the cores from inside, so a parallel outer loop would
     # only fight its intra-op threading. The read-ahead window exists to keep
     # that single encoder fed rather than to make downloading faster.
-    with ThreadPoolExecutor(max_workers=DOWNLOAD_WORKERS) as pool:
-        for cand, blob in prefetch(pool, stream, fetch, PREFETCH):
+    workers = download_workers(encoder, cfg)
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for cand, blob in prefetch(pool, stream, fetch, workers * PREFETCH_FACTOR):
             if not blob:
                 continue
             result.images_examined += 1
