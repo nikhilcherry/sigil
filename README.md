@@ -23,6 +23,13 @@ and the match is decided by the face model rather than asserted by the code — 
 no candidate clears the threshold, **nothing is anchored**, which is the correct
 outcome rather than a failure.
 
+| | |
+|---|---|
+| **what it does** | above, and [§1–§5](#the-stages) stage by stage |
+| **how to run it** | [Quickstart](#quickstart) — one command, no API keys, no wallet, no testnet funds |
+| **which blockchain** | [§4](#4--blockchain-verification): a persisted in-process **py-evm** chain by default, so a clone anchors for real with no setup; any EVM node via `SIGIL_CHAIN=rpc`, exercised against **Polygon Amoy** |
+| **known limitations** | [Limitations](#limitations) — including the measured false-accept and wrong-name rates, and what this tool is not |
+
 ### Where each part lives
 
 | stage | implementation | see |
