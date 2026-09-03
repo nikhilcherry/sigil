@@ -816,7 +816,13 @@ on yourself, on a consenting subject, or on a public figure for a demonstration.
   essentially all inference — **97% of it is the detector**, against about 3%
   waiting on the network — and a default run with both arms enabled takes
   ~50 s for 169 images. On GPU the detector is 12× faster and the balance
-  inverts: the same run is network-bound and takes ~16–23 s. The download
+  inverts: the same run is network-bound and takes ~16–23 s over four
+  measurements — and being network-bound means it is now *variable* rather than
+  predictable. `scripts/demo.sh` has been observed between 32 s and 104 s on
+  identical code, the spread being entirely third-party latency. Its floor is
+  about 24 s regardless: the script runs six commands that each load the model
+  in their own process, at ~3.9 s apiece, and that cost is the same on CPU and
+  CUDA because it is reading a file rather than warming a device. The download
   worker count follows the encoder for exactly that reason (8 on CPU, 16 on
   CUDA, `SIGIL_DOWNLOAD_WORKERS` to override), which halved the search stage
   on GPU and does nothing at all on CPU.
