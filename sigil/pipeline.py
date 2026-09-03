@@ -13,7 +13,12 @@ from .chain import ChainClient, Verification
 from .config import Config
 from .evidence import Evidence, MatchRef, ProbeRef, sha256_hex, utc_now
 from .face import Face, decode_image, largest_face, load_encoder
-from .search import BlueskyProvider, GoogleVisionProvider, SerpApiLensProvider
+from .search import (
+    BlueskyProvider,
+    GoogleVisionProvider,
+    SearchProvider,
+    SerpApiLensProvider,
+)
 from .search.matcher import MatchResult, search_and_match
 
 # Naming a stranger is a higher-stakes call than confirming a match you were
@@ -81,7 +86,7 @@ def scan_probe(image_bytes: bytes, cfg: Config) -> tuple[Face, ProbeRef, Any]:
 
 
 def build_providers(cfg: Config, probe_url: str | None,
-                    probe_bytes: bytes | None = None) -> list:
+                    probe_bytes: bytes | None = None) -> list[SearchProvider]:
     """Assemble the search arms available for this run.
 
     Bluesky is unconditional: it is the only arm that needs no credentials, so
@@ -89,7 +94,7 @@ def build_providers(cfg: Config, probe_url: str | None,
     additive - each one widens coverage when its key is present and is skipped
     rather than faked when it is not.
     """
-    providers: list = [BlueskyProvider(cfg)]
+    providers: list[SearchProvider] = [BlueskyProvider(cfg)]
     if GoogleVisionProvider.available_for(cfg, probe_bytes):
         providers.append(GoogleVisionProvider(cfg, probe_bytes))
     if SerpApiLensProvider.available_for(cfg, probe_url):

@@ -57,7 +57,7 @@ class SerpApiLensProvider:
                 continue
             yield Candidate(
                 platform=(m.get("source") or urlparse(link).netloc or "web").lower(),
-                source_kind="web",
+                source_kind=self.kind,
                 image_url=image_url,
                 post_url=link,
                 post_uri=link,

@@ -46,7 +46,20 @@ class ProviderTrace:
 
 @runtime_checkable
 class SearchProvider(Protocol):
+    """What the matcher needs from an arm, and what a new arm must supply.
+
+    Runtime-checkable and actually used as the annotation below, so it is a
+    contract rather than a comment: `tests/test_search.py` asserts every
+    shipped provider satisfies it, which is what catches an arm that forgets
+    `kind` or `trace`.
+    """
+
     name: str
+    # "social" or "web". Each provider stamps this onto every Candidate it
+    # yields, so it is declared once per arm rather than repeated at each
+    # construction site - Bluesky builds candidates in two places and would
+    # otherwise be one forgotten literal away from silently losing the
+    # social preference in `pick_best`.
     kind: str
     trace: ProviderTrace
 

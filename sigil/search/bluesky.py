@@ -103,7 +103,7 @@ class BlueskyProvider:
         for url in self._images_from_post(post):
             yield Candidate(
                 platform="bluesky",
-                source_kind="social",
+                source_kind=self.kind,
                 image_url=url,
                 post_url=at_uri_to_web_url(post.get("uri", ""), handle),
                 post_uri=post.get("uri", ""),
@@ -172,7 +172,7 @@ class BlueskyProvider:
                 if actor.get("avatar"):
                     yield Candidate(
                         platform="bluesky",
-                        source_kind="social",
+                        source_kind=self.kind,
                         image_url=actor["avatar"],
                         post_url=f"https://bsky.app/profile/{actor.get('handle', '')}",
                         post_uri=f"at://{actor.get('did', '')}/app.bsky.actor.profile/self",

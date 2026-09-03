@@ -877,3 +877,62 @@ def test_the_worker_count_actually_reaches_the_pool(monkeypatch):
     provider = FakeProvider([_candidate("https://a")])
     search_and_match(FakeEncoder({}), _face([1, 0, 0]), [provider], "q", 0.38, cfg)
     assert seen["max_workers"] == 5
+
+
+# ------------------------------------------- the provider contract, enforced
+
+
+def test_every_shipped_provider_satisfies_the_protocol():
+    """`SearchProvider` was exported and never used, so it documented nothing.
+
+    It is the annotation on `build_providers` and `search_and_match` now, and
+    runtime-checkable, so this is what catches an arm that forgets `kind` or
+    `trace` - either of which fails quietly rather than loudly: a missing
+    `kind` would drop the social preference in `pick_best`, and a missing
+    `trace` would leave the arm out of the audit record in the bundle.
+    """
+    from sigil.search import (
+        BlueskyProvider,
+        GoogleVisionProvider,
+        SearchProvider,
+        SerpApiLensProvider,
+    )
+
+    cfg = Config()
+    arms = [
+        BlueskyProvider(cfg),
+        GoogleVisionProvider(cfg, b"probe-bytes"),
+        SerpApiLensProvider(cfg, "https://example.com/probe.jpg"),
+    ]
+    for arm in arms:
+        assert isinstance(arm, SearchProvider), arm.__class__.__name__
+        assert arm.kind in ("social", "web"), arm.name
+        assert arm.trace.provider == arm.name
+
+
+def test_an_arm_missing_kind_is_not_a_provider():
+    """The contract has to reject something, or it is not a contract."""
+    from sigil.search import SearchProvider
+
+    class NoKind:
+        name = "forgetful"
+        trace = ProviderTrace(provider="forgetful")
+
+        def candidates(self, query):
+            yield from ()
+
+    assert not isinstance(NoKind(), SearchProvider)
+
+
+def test_a_provider_stamps_its_own_kind_onto_every_candidate(monkeypatch):
+    """Declared once per arm rather than repeated at each construction site.
+
+    Bluesky builds candidates in two places; a forgotten literal at either
+    would have defaulted that candidate to "web" and silently lost the social
+    preference for it.
+    """
+    provider = _bsky_provider(_actors(3))
+    cands = list(provider.candidates("q"))
+
+    assert cands, "no candidates to check"
+    assert {c.source_kind for c in cands} == {provider.kind} == {"social"}

@@ -21,7 +21,7 @@ from ..config import Config
 from ..evidence import sha256_hex
 from ..face import Face, cosine, decode_image
 from ..provenance import IDENTITY, claim_for, fingerprint, photo_similarity
-from .base import Candidate
+from .base import Candidate, SearchProvider
 from .http import fetch_image, make_session
 
 # How many candidate images to download at once. Two values, because the right
@@ -170,7 +170,7 @@ def score_image(
 def search_and_match(
     encoder,
     probe: Face,
-    providers: list,
+    providers: list[SearchProvider],
     query: str,
     threshold: float,
     cfg: Config,

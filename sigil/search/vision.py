@@ -116,7 +116,7 @@ class GoogleVisionProvider:
         host = urlparse(page_url or image_url).netloc
         return Candidate(
             platform=(host or "web").lower(),
-            source_kind="web",
+            source_kind=self.kind,
             image_url=image_url,
             post_url=page_url or image_url,
             post_uri=page_url or image_url,
