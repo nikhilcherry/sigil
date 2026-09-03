@@ -762,6 +762,11 @@ that only means anything for insightface; CI adds the seven that need the
 backend itself. CI installs `.[dev]` alone because the 300 MB model pack is not
 worth a minute on every push, and still enforces `--cov-fail-under=95`.
 
+That 494 is a 3.11-and-up figure. On 3.10 it is 486, because `tomllib` is not
+in that stdlib and `tests/test_packaging.py` skips at import — a module-level
+skip drops its eight tests out of *collection* rather than reporting them as
+skipped, which is the one way a count stops being comparable between two runs.
+
 Both numbers are enforced rather than asserted: CI fails under its own coverage
 floor, and the test count is checked against this README by the suite itself —
 in **both** installs, and against every place the README states it. That check

@@ -88,6 +88,23 @@ def test_the_readme_states_the_real_offline_test_count(pytestconfig):
     if getattr(pytestconfig, "collected_modules", 0) < 10:
         pytest.skip("partial collection - only the full suite knows the count")
 
+    # A module-level skip removes its tests from the count rather than marking
+    # them skipped, so the number is only comparable when every test module was
+    # collected. test_packaging does exactly this on 3.10, where tomllib is not
+    # in the stdlib - eight tests, and a README figure that is correct on 3.11+
+    # would look eight too high. Name the module rather than fudging the count:
+    # a hardcoded allowance would go stale the moment that module changes size.
+    missing = sorted(
+        f.stem for f in sorted(README.parent.glob("tests/test_*.py"))
+        if f.stem not in getattr(pytestconfig, "collected_module_names", set())
+    )
+    if missing:
+        pytest.skip(
+            "not every test module was collected on this interpreter "
+            f"({', '.join(missing)} skipped at import), so the offline count "
+            "is not comparable with the README's"
+        )
+
     stated = re.findall(r"(\d+)\s+offline tests", README.read_text())
     assert stated, "the README no longer states an offline test count"
     actual = pytestconfig.offline_test_count

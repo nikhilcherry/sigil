@@ -125,4 +125,11 @@ def pytest_collection_modifyitems(session, config, items):
     config.offline_test_count = sum(
         1 for item in items if "network" not in item.keywords
     )
-    config.collected_modules = len({item.module.__name__ for item in items})
+    names = {item.module.__name__ for item in items}
+    config.collected_modules = len(names)
+    # Which test modules actually made it into collection. A module-level
+    # skip - `pytest.importorskip` at import time, as test_packaging does for
+    # tomllib on 3.10 - removes its tests from the count entirely rather than
+    # marking them skipped, so a count compared across interpreters is only
+    # meaningful once you know the same modules were collected on both.
+    config.collected_module_names = names
