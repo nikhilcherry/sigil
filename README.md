@@ -732,7 +732,7 @@ verifying against new probes — pick one and keep it).
 ## Tests
 
 ```bash
-pytest -m "not network"   # 445 offline tests, 96% line coverage
+pytest -m "not network"   # 461 offline tests, 96% line coverage
 pytest -m network         # 3 tests against the live API and a live chain
 ```
 
@@ -818,6 +818,23 @@ on yourself, on a consenting subject, or on a public figure for a demonstration.
   the probe's embedding from its pixels, the source image's bytes, and the
   identity-vs-provenance claim from the two images — but no amount of
   re-derivation makes a face model right.
+- **A candidate URL is chosen by a third party, so it is checked before it is
+  fetched.** Every image this tool downloads is at an address supplied by
+  someone else — an AppView response, whatever Google's web index returned — and
+  "download every candidate" would otherwise mean "issue a GET wherever a search
+  result points". That includes `http://127.0.0.1:8099/api/evidence`, which is
+  this tool's own web UI, and a cloud metadata endpoint. Non-`http(s)` schemes
+  are refused, and so is any host resolving to a loopback, private, link-local
+  or otherwise non-global address — before the socket is opened, and again on
+  the post-redirect URL, since an `https` CDN link that 302s to loopback would
+  walk past the first check. The reason is not only defensive: the bundle
+  asserts the match is a *publicly posted* image, and an address on a private
+  range cannot be one, so such a candidate is wrong on the bundle's own terms.
+  Known limit, stated rather than papered over — the name is resolved by the
+  check and again by the request, so a host answering differently between the
+  two defeats it; closing that needs the connection pinned to the address that
+  was checked.
+
 - **No biometrics on chain — by design.** The registry stores a salted
   commitment to the probe, never an embedding or an image. Publishing a face
   vector to an append-only public ledger would be an irreversible biometric
