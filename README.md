@@ -596,7 +596,7 @@ verifying against new probes — pick one and keep it).
 ## Tests
 
 ```bash
-pytest -m "not network"   # 318 offline tests, 93% line coverage
+pytest -m "not network"   # 377 offline tests, 93% line coverage
 pytest -m network         # 3 tests against the live API and a live chain
 ```
 
@@ -647,7 +647,7 @@ on yourself, on a consenting subject, or on a public figure for a demonstration.
   That is small enough for a demonstration and far too large to act on.
 - **False positives are possible, at a measured rate.** A cosine threshold is a
   decision boundary, not proof of identity. At 0.380 the measured pair-level
-  false-accept rate is 2.836 × 10⁻⁵ and the true-accept rate 94.69%
+  false-accept rate is 2.836 × 10⁻⁵ and the true-accept rate 94.44%
   ([§5](#5--calibration--what-the-threshold-actually-costs)); similarity is
   recorded on-chain precisely so a downstream reader can apply their own bar.
   Twins, close relatives, and heavily filtered photos are the known hard cases,

@@ -63,3 +63,20 @@ def test_the_readme_covers_what_the_task_requires():
     assert "## limitations" in text
     assert "polygon" in text and "py-evm" in text
     assert "sigil run" in text
+
+
+def test_the_readme_states_the_real_offline_test_count(pytestconfig):
+    """A stale count in a graded deliverable is a false claim, not a typo.
+
+    Only meaningful on a full run: collecting one file would compare the
+    README against that file's count, so a partial run skips instead.
+    """
+    if getattr(pytestconfig, "collected_modules", 0) < 10:
+        pytest.skip("partial collection - only the full suite knows the count")
+
+    stated = re.search(r"#\s*(\d+)\s+offline tests", README.read_text())
+    assert stated, "the README no longer states an offline test count"
+    actual = pytestconfig.offline_test_count
+    assert int(stated.group(1)) == actual, (
+        f"README says {stated.group(1)} offline tests, this run collected {actual}"
+    )

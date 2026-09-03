@@ -81,3 +81,16 @@ def bluesky_post_fixture():
         }
         """
     )
+
+
+def pytest_collection_modifyitems(session, config, items):
+    """Record how many offline tests this run collected.
+
+    The README states the number, and it has gone stale more than once. Rather
+    than remember to update it, `tests/test_readme.py` compares it against
+    this - the same reason that file already checks the README's links.
+    """
+    config.offline_test_count = sum(
+        1 for item in items if "network" not in item.keywords
+    )
+    config.collected_modules = len({item.module.__name__ for item in items})
