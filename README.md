@@ -234,7 +234,10 @@ sigil run photo.jpg -q "…"   # skip identification, search directly
 
 Against that index the committed example probe names itself at **0.9720**
 cosine, with the runner-up at 0.2105 — the gap, not the absolute number, is
-what makes the call safe.
+what makes the call safe. Those are the CPU figures; the same probe encoded on
+CUDA against the same CPU-built index gives 0.9722 and 0.2107, which is the
+whole of the cross-provider difference and a good illustration of why only the
+gap is worth quoting.
 
 Naming a stranger is a higher-stakes call than confirming a match you were
 already looking for, so this stage uses a stricter bar (0.45 vs 0.38 cosine).

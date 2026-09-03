@@ -224,6 +224,10 @@ def search_and_match(
     # Anything faster costs recall, which is the same trade det_size=320 was
     # rejected for. Not worth a second model on the critical path.
     #
+    # On a GPU it stops being arguable at all: the real encoder drops to ~18 ms
+    # an image, and YuNet's gate cost ~16.5 ms, so the filter would cost about
+    # as much as the work it was meant to avoid.
+    #
     # Network in parallel, inference serially. Inference is the expensive half
     # by a wide margin - a default run spends a couple of minutes in ONNX
     # against a few seconds of download across eight workers - and onnxruntime
