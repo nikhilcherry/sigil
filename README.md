@@ -420,6 +420,40 @@ genuine similarities are people photographed decades apart — Al Pacino at
 0.2431, Andre Agassi at 0.2455 — which is age, not error, and is exactly what a
 threshold this strict is choosing to miss.
 
+#### Naming a face is a different question, and a much harder one
+
+Everything above is a *pair* rate: two faces, one comparison. `sigil identify`
+does not do that. It compares one probe against **every** face in the index at
+once, so it gets 3,583 chances to be wrong per question asked — and a rate of 1
+in 35,000 per pair becomes percents per query.
+
+Measured leave-one-out, which is exactly the dangerous case: every indexed face
+queried against every *other* one, so the correct answer is absent and the only
+question is whether the index names it anyway.
+
+| threshold | wrong name per query | ignoring duplicate index entries |
+|---|---|---|
+| 0.38 *(the match threshold)* | 4.16% | 4.05% |
+| 0.42 | 2.26% | 2.15% |
+| **0.45** *(the identity threshold)* | **1.73%** | **1.62%** |
+| 0.50 | 0.95% | 0.84% |
+| 0.55 | 0.45% | 0.33% |
+| 0.70 | 0.17% | 0.06% |
+
+This vindicates the reasoning behind a separate, stricter bar for naming — and
+it also puts a real number on what that bar buys, which is a 1-in-58 chance of
+a confident wrong name rather than one in tens of thousands. Reusing 0.38 here
+would have more than doubled it.
+
+The worst offenders are the same index artefacts as before (`G. D. Agrawal` ↔
+`गुरुदास अग्रवाल`, one man twice), and after those, genuine lookalikes: the
+footballers `Aymeric Laporte` and `Iván Barton` name each other at 0.7496.
+
+`sigil identify` now prints this rate under its results whenever a calibration
+exists at the threshold in use — and refuses to quote it at any other
+threshold, because the number moves steeply with the bar and a borrowed one
+would be worse than none.
+
 Two caveats the report repeats every run, because they cut in opposite
 directions: some cross-language portraits are crops of one file rather than a
 separate photograph, which flatters the true-positive rate (byte-identical

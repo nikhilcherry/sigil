@@ -485,3 +485,110 @@ def test_a_corrupt_calibration_does_not_take_the_match_panel_down(tmp_path,
     with console.capture() as cap:
         match_panel(evidence)
     assert "Match found" in cap.get()
+
+
+# --------------------------------------------- naming a face, not a pair
+
+
+def test_a_clean_index_never_names_the_wrong_face():
+    from sigil.calibrate import false_name_rate
+
+    index = _index([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+    rate, clean, examples = false_name_rate(index, threshold=0.45)
+    assert rate == 0.0 and clean == 0.0 and examples == []
+
+
+def test_a_face_is_never_its_own_impostor():
+    """Without excluding the diagonal every query trivially matches itself."""
+    from sigil.calibrate import false_name_rate
+
+    index = _index([[1, 0], [0, 1]])
+    assert false_name_rate(index, threshold=0.99)[0] == 0.0
+
+
+def test_two_faces_that_look_alike_make_both_queries_wrong():
+    from sigil.calibrate import false_name_rate
+
+    index = _index([[1, 0], [1, 0], [0, 1]], names=["A", "B", "C"])
+    rate, _clean, examples = false_name_rate(index, threshold=0.45)
+    assert rate == pytest.approx(2 / 3)
+    assert {e["queried"] for e in examples} == {"A", "B"}
+
+
+def test_one_person_indexed_twice_is_separated_from_a_real_misnaming():
+    """Naming that face with the other entry's label answers a bad index."""
+    from sigil.calibrate import false_name_rate
+
+    index = _index([[1, 0], [1, 0], [0.9, 0.436], [0, 1]],
+                   names=["Dupe A", "Dupe B", "Lookalike", "Other"])
+    rate, clean, examples = false_name_rate(index, threshold=0.45)
+    assert rate > clean, "duplicates should be excluded from the clean rate"
+    dupes = {e["queried"] for e in examples if e["duplicate_entry"]}
+    assert dupes == {"Dupe A", "Dupe B"}
+
+
+def test_the_rate_falls_as_the_threshold_rises():
+    from sigil.calibrate import false_name_rate
+
+    index = _index([[1, 0], [0.9, 0.436], [0.6, 0.8], [0, 1]])
+    loose = false_name_rate(index, threshold=0.3)[0]
+    strict = false_name_rate(index, threshold=0.95)[0]
+    assert loose > strict
+
+
+def test_the_examples_are_ordered_worst_first():
+    from sigil.calibrate import false_name_rate
+
+    index = _index([[1, 0], [0.99, 0.141], [0.8, 0.6], [0, 1]])
+    examples = false_name_rate(index, threshold=0.4)[2]
+    sims = [e["similarity"] for e in examples]
+    assert sims == sorted(sims, reverse=True)
+
+
+def test_measure_records_the_identity_rate_alongside_the_pair_rate():
+    by_qid, index = _population([0.9, 0.5], [0.1])
+    c = measure(FakeEncoder(), index, by_qid, threshold=0.38,
+                identify_threshold=0.45)
+    assert c.identify_threshold == 0.45
+    assert c.false_name_rate is not None
+    assert c.false_name_rate_excluding_artefacts is not None
+
+
+def test_a_calibration_written_before_this_existed_still_loads(tmp_path):
+    """The fields are defaulted so an older file parses rather than failing."""
+    by_qid, index = _population([0.9, 0.5], [0.1])
+    c = measure(FakeEncoder(), index, by_qid, threshold=0.38)
+    path = tmp_path / "old.json"
+    data = c.to_dict()
+    for key in ("identify_threshold", "false_name_rate",
+                "false_name_rate_excluding_artefacts", "wrongly_named"):
+        data.pop(key)
+    path.write_text(json.dumps(data))
+
+    back = Calibration.load(path)
+    assert back.false_name_rate is None
+    assert back.wrongly_named == []
+
+
+def test_the_identity_table_quotes_the_rate_only_at_the_measured_threshold(
+    tmp_path, monkeypatch
+):
+    import sigil.calibrate as cal
+    from sigil.report import console, identity_table
+
+    by_qid, index = _population([0.9, 0.5], [0.1])
+    c = measure(FakeEncoder(), index, by_qid, threshold=0.38,
+                identify_threshold=0.45)
+    saved = tmp_path / "calibration.json"
+    c.save(saved)
+    monkeypatch.setattr(cal, "CALIBRATION_PATH", saved)
+
+    event = {"index_size": 2, "threshold": 0.45, "hits": []}
+    with console.capture() as cap:
+        identity_table(event, echo=True)
+    assert "named anyway" in cap.get()
+
+    # A different bar must not borrow that number; the rate moves steeply.
+    with console.capture() as cap:
+        identity_table({**event, "threshold": 0.60}, echo=True)
+    assert "named anyway" not in cap.get()

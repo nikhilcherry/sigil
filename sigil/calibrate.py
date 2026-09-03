@@ -125,6 +125,13 @@ class Calibration:
     thresholds_for_fpr: dict[str, float] = field(default_factory=dict)
     artefact_examples: list[dict[str, Any]] = field(default_factory=list)
     hardest_genuine: list[dict[str, Any]] = field(default_factory=list)
+    # The identity index is a different question from the match threshold, and
+    # a harder one. Defaulted so a calibration written before this existed
+    # still loads rather than failing to parse.
+    identify_threshold: float | None = None
+    false_name_rate: float | None = None
+    false_name_rate_excluding_artefacts: float | None = None
+    wrongly_named: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -348,6 +355,51 @@ def impostor_similarities(index: IdentityIndex) -> tuple[np.ndarray, tuple]:
     return s[iu].astype(np.float64), iu
 
 
+def false_name_rate(
+    index: IdentityIndex, threshold: float, artefact: float = ARTEFACT
+) -> tuple[float, float, list[dict[str, Any]]]:
+    """How often the index would put a *wrong name* to a face, per query.
+
+    This is not the pair-level false-positive rate, and the difference is the
+    whole point. `sigil identify` compares one probe against every face in the
+    index at once, so it gets thousands of chances to be wrong per question
+    asked. A per-pair rate of 1e-5 across 3,583 candidates is roughly a 3.5%
+    chance of a wrong name on any single query - two numbers that sound alike
+    and differ by three orders of magnitude.
+
+    So it is measured the way the tool is used: every indexed face is queried
+    against every *other* one, and a query counts as wrong if anything else
+    clears the threshold. Returns (rate, rate ignoring artefacts, examples).
+
+    Pairs at or above ``artefact`` are one human indexed twice - a duplicated
+    Wikidata entity, or one painting illustrating two people. Naming that face
+    with the other entry's label is a correct answer to a mislabelled index,
+    so it is reported both ways rather than silently counted as a failure.
+    """
+    m = _unit(index.vectors.astype(np.float32))
+    s = m @ m.T
+    np.fill_diagonal(s, -2.0)  # a face is not its own impostor
+
+    best = s.argmax(axis=1)
+    top = s[np.arange(len(s)), best]
+    wrong = top >= threshold
+    genuine_dupe = top >= artefact
+
+    names = [i.name for i in index.identities]
+    order = np.argsort(top)[::-1]
+    examples = [
+        {"queried": names[int(i)], "named": names[int(best[i])],
+         "similarity": round(float(top[i]), 4),
+         "duplicate_entry": bool(genuine_dupe[i])}
+        for i in order[:8] if wrong[i]
+    ]
+    return (
+        float(wrong.mean()),
+        float((wrong & ~genuine_dupe).mean()),
+        examples,
+    )
+
+
 def _rates(genuine: np.ndarray, impostor: np.ndarray, t: float) -> tuple[float, float]:
     return float((genuine >= t).mean()), float((impostor >= t).mean())
 
@@ -364,6 +416,7 @@ def measure(
     threshold: float,
     requested: int = 0,
     born_after: int | None = BORN_AFTER,
+    identify_threshold: float | None = None,
 ) -> Calibration:
     """Turn the two similarity populations into the numbers worth reporting."""
     genuine, gkeys = genuine_similarities(by_qid)
@@ -386,6 +439,12 @@ def measure(
     # It is the one summary number that does not depend on a chosen threshold.
     at = int(np.argmin([abs((1 - c["tpr"]) - c["fpr"]) for c in curve]))
     eer = (1 - curve[at]["tpr"] + curve[at]["fpr"]) / 2
+
+    if identify_threshold is None:
+        from .pipeline import IDENTITY_THRESHOLD
+
+        identify_threshold = IDENTITY_THRESHOLD.get(encoder.name, 0.45)
+    name_rate, name_rate_clean, wrongly = false_name_rate(index, identify_threshold)
 
     names = [i.name for i in index.identities]
     top = np.argsort(impostor)[::-1][:8]
@@ -424,6 +483,10 @@ def measure(
              "similarity": round(float(genuine[int(k)]), 4)}
             for k in hard
         ],
+        identify_threshold=identify_threshold,
+        false_name_rate=name_rate,
+        false_name_rate_excluding_artefacts=name_rate_clean,
+        wrongly_named=wrongly,
     )
 
 

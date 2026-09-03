@@ -121,6 +121,24 @@ def match_panel(evidence) -> None:
     console.print(Panel(t, title="Match found", border_style="green", expand=False))
 
 
+def _false_name_rate(threshold: float) -> float | None:
+    """The measured chance of naming an unknown face, if it has been measured.
+
+    Only reported when the calibration was taken at the threshold in use -
+    the rate changes steeply with it, so quoting one for a different bar
+    would be worse than quoting none.
+    """
+    try:
+        from .calibrate import Calibration
+
+        cal = Calibration.load()
+    except Exception:  # noqa: BLE001 - absent or stale is not an error
+        return None
+    if cal.identify_threshold is None or abs(cal.identify_threshold - threshold) > 1e-9:
+        return None
+    return cal.false_name_rate
+
+
 def _measured_rates(evidence):
     """The measured rates for this run's threshold, if a calibration exists.
 
@@ -222,6 +240,10 @@ def identity_table(event: dict[str, Any], echo: bool = False):
             h.get("source", ""),
         )
     t.caption = f"accepted at ≥ {threshold:.2f} cosine"
+    rate = _false_name_rate(threshold)
+    if rate is not None:
+        t.caption += (f" · measured: {rate * 100:.2f}% of faces this index does "
+                      f"not contain are named anyway")
     if echo:
         console.print(t)
         return None
@@ -298,6 +320,40 @@ def calibration_panel(c) -> None:
                            style="red" if e["similarity"] >= 0.99 else "yellow"),
                       e["a"], e["b"])
         console.print(a)
+
+    if c.false_name_rate is not None:
+        n = Table.grid(padding=(0, 2))
+        n.add_column(style="dim", justify="right")
+        n.add_column()
+        n.add_row("identity threshold", f"[bold]{c.identify_threshold:.2f}[/bold]")
+        n.add_row("puts a wrong name to a face",
+                  f"[bold yellow]{c.false_name_rate * 100:.2f}%[/bold yellow] "
+                  f"[dim]of queries[/dim]")
+        n.add_row("  ignoring duplicate entries",
+                  f"{c.false_name_rate_excluding_artefacts * 100:.2f}%")
+        console.print(Panel(
+            n,
+            title=f"Naming a face — {c.index_identities:,} candidates per query",
+            border_style="yellow", expand=False))
+        console.print(
+            "[dim]Measured leave-one-out: every indexed face queried against every "
+            "other, which is exactly the dangerous case — a probe the index does "
+            "not contain. Note how far this is from the pair-level rate above. "
+            "One query is thousands of chances to be wrong, so a false-accept "
+            "rate of 1 in 35,000 per pair is percents per question.[/dim]"
+        )
+        if c.wrongly_named:
+            w = Table(header_style="bold", border_style="dim",
+                      title="Faces the index would misname")
+            w.add_column("similarity", justify="right")
+            w.add_column("this face")
+            w.add_column("would be called")
+            w.add_column("", style="dim")
+            for e in c.wrongly_named:
+                w.add_row(Text(f"{e['similarity']:.4f}", style="yellow"),
+                          e["queried"], e["named"],
+                          "duplicate index entry" if e["duplicate_entry"] else "")
+            console.print(w)
 
     if c.hardest_genuine:
         h = Table(header_style="bold", border_style="dim",
