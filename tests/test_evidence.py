@@ -177,3 +177,28 @@ def test_altering_any_field_changes_the_hash(evidence):
         except ValueError:
             continue  # a list or bool needs an explicit value; covered above
         assert Evidence.from_dict(fresh).evidence_hash_hex() != original, path
+
+
+def test_a_negative_similarity_is_recorded_as_zero_on_chain(evidence):
+    """The registry field is unsigned; the bundle keeps the real number."""
+    evidence.similarity = -0.5
+    assert evidence.similarity_bps() == 0
+    assert evidence.to_dict()["similarity"] == -0.5
+
+
+def test_two_different_negative_similarities_still_change_the_hash(evidence):
+    """They collapse to the same basis points, so the hash has to carry them."""
+    from sigil.evidence import Evidence
+
+    a = Evidence.from_dict(evidence.to_dict())
+    b = Evidence.from_dict(evidence.to_dict())
+    a.similarity, b.similarity = -0.5, -0.9
+    assert a.similarity_bps() == b.similarity_bps() == 0
+    assert a.evidence_hash_hex() != b.evidence_hash_hex()
+
+
+def test_similarity_basis_points_span_the_whole_cosine_range(evidence):
+    evidence.similarity = 1.0
+    assert evidence.similarity_bps() == 10000
+    evidence.similarity = 0.7596
+    assert evidence.similarity_bps() == 7596

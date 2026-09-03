@@ -104,8 +104,20 @@ class Evidence:
         return "0x" + self.evidence_hash().hex()
 
     def similarity_bps(self) -> int:
-        """Similarity as basis points, clamped to uint32 range for on-chain storage."""
-        return max(0, min(65535, int(round(self.similarity * 10000))))
+        """Similarity as basis points, for the registry's uint32 field.
+
+        A cosine between unit vectors is in [-1, 1], so the real domain is
+        [-10000, 10000] and only the lower bound ever binds: a negative
+        similarity - reachable only with a negative SIGIL_THRESHOLD - is
+        recorded as 0, because the field is unsigned. That is lossy, and it is
+        why the chain's similarity is a cross-check rather than the record:
+        the *authoritative* copy of the number lives in the bundle, inside the
+        keccak256, where an edit of any size changes the hash.
+
+        The upper bound is the field's, not the value's; nothing that can be
+        produced here approaches it.
+        """
+        return max(0, min(2**32 - 1, int(round(self.similarity * 10000))))
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Evidence:
