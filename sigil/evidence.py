@@ -148,6 +148,24 @@ def subject_ref(embedding_sha256: str, salt: str) -> bytes:
     It is derived from the digest rather than the raw vector so that every path
     - full pipeline, standalone anchor, standalone verify - produces the same
     commitment from the bundle alone.
+
+    That choice sets the scope of what "recompute it" means, and the scope is
+    narrower than it sounds: the commitment is a function of the *digest*, and
+    the digest is a function of the image, the model, the salt **and the
+    execution provider**. Measured on one image, one model and one salt:
+
+        CUDA   subject_ref 0x085f4063f97d87d1…
+        CPU    subject_ref 0x42ada404b40c1634…
+
+    So the commitment proves "this record refers to the face in this image, as
+    encoded here" - not "as encoded anywhere". Two runs of the same person on
+    different providers produce unlinkable commitments, and a third party
+    recomputing one needs the provider as well as the photograph.
+
+    Left as it is rather than made provider-stable. Quantising the vector
+    before hashing would do it, and would trade a clean commitment for a
+    parameter that has to be argued about; the bundle records its provider
+    instead, so the scope is visible rather than assumed.
     """
     return keccak(SUBJECT_DOMAIN + salt.encode("utf-8") + bytes.fromhex(embedding_sha256))
 

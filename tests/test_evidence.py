@@ -222,3 +222,31 @@ def test_a_deep_path_that_runs_out_partway_names_where_it_stopped(evidence):
 
     with pytest.raises(ValueError, match="no field 'match.nope'"):
         alter_field(_bundle_dict(evidence), "match.nope.deeper")
+
+
+def test_the_subject_commitment_is_scoped_to_the_provider_not_just_the_face(
+    probe_ref,
+):
+    """What "anyone can recompute it" actually requires.
+
+    The commitment is a function of the embedding digest, and that digest
+    differs between CPU and CUDA for one image - the embeddings agree to
+    0.9996 and sha256 has no notion of close. So two runs of the same person
+    on different providers produce unlinkable commitments, and a third party
+    recomputing one needs the provider as well as the photograph.
+
+    Asserted so the scope is a property of the design rather than a surprise:
+    if someone later makes the commitment provider-stable, this test is where
+    they will come to say so deliberately.
+    """
+    from sigil.evidence import subject_ref
+
+    on_cpu = "33b13452bd764bcbf76561579c2f1fe52977e8d0c5e20271800230dfcda49e84"
+    on_cuda = "9324dd67708b66c8e9db0659c4e57d1217a52a886879b72e8887f85a5" + "0" * 7
+    assert on_cpu != on_cuda
+
+    salt = "sigil-default-salt"
+    assert subject_ref(on_cpu, salt) != subject_ref(on_cuda, salt)
+    # And it is a pure function of (digest, salt), so the same pair always
+    # recomputes - which is what makes it checkable at all.
+    assert subject_ref(on_cpu, salt) == subject_ref(on_cpu, salt)

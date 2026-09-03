@@ -638,7 +638,7 @@ Six independent checks:
 |---|---|
 | record on chain | the bundle's hash exists in the registry |
 | similarity matches | the score was not edited after anchoring |
-| subject commitment | the record refers to *this* face |
+| subject commitment | the record refers to *this* face, as encoded on *this* provider — see below |
 | probe re-encodes *(`--probe`)* | the supplied photo really produces the bundle's embedding |
 | source image intact *(`--recheck-source`)* | the discovered post has not been edited or deleted since |
 | claim re-derives *(both)* | the identity-vs-provenance verdict follows from the two images |
@@ -727,7 +727,7 @@ verifying against new probes — pick one and keep it).
 ## Tests
 
 ```bash
-pytest -m "not network"   # 427 offline tests, 96% line coverage
+pytest -m "not network"   # 428 offline tests, 96% line coverage
 pytest -m network         # 3 tests against the live API and a live chain
 ```
 
