@@ -342,10 +342,19 @@ Two notes from actually testing this. First, `rpc-amoy.polygon.technology` — t
 endpoint most guides cite — was unreachable during development;
 `polygon-amoy-bor-rpc.publicnode.com` and `polygon-amoy.drpc.org` both work
 (chain id 80002). Second, the RPC path here has been exercised end to end
-against a live Amoy node up to the point of funding: it connects, builds and
-prices the deployment transaction, and stops at `insufficient funds` with an
-unfunded key. Fund a throwaway address from an Amoy faucet and it deploys for
-real — that is the only step that needs a human.
+against a live Amoy node up to the point of funding, and re-checked against it
+on 2026-09-03: `sigil chain address --chain rpc` connects, reports chain id
+80002, derives the address and reads its balance without deploying anything,
+and `sigil chain info` then refuses with
+
+```
+Error: 0x0b86bB… has no funds on chain 80002. Fund it from a testnet faucet
+(`sigil chain address` shows the address and its balance), or use SIGIL_CHAIN=local.
+```
+
+— a message rather than a web3 traceback, exiting 1 so a script can act on it.
+Fund a throwaway address from an Amoy faucet and it deploys for real. That is
+the only step that needs a human.
 
 ### 5 · Calibration — what the threshold actually costs
 
