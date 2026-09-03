@@ -585,3 +585,52 @@ def test_the_url_allowlist_only_admits_http_and_https():
     body = body[:body.index("\n}")]
     assert "https?" in body and 'return' in body
     assert '"#"' in body, "a rejected URL must become inert, not pass through"
+
+
+# ------------------------------------------------- runs nobody listened to
+
+
+def test_a_run_nobody_streamed_is_not_retained_forever(app, monkeypatch):
+    """`_stream`'s finally cannot fire if no client ever connects.
+
+    A client that POSTs /api/run and never opens the stream leaves the job,
+    and every event the pipeline queued on it, in the table for the life of
+    the process. The abandoned-mid-stream case was already handled; this is
+    the never-connected one.
+    """
+    import base64
+
+    from tests.conftest import EXAMPLE_PROBE
+
+    monkeypatch.setattr(web, "_run_job", lambda job, *a, **kw: job.finish())
+
+    body = {"image_b64": base64.b64encode(EXAMPLE_PROBE.read_bytes()).decode(),
+            "query": "q"}
+    ids = []
+    for _ in range(3):
+        status, payload = post(app + "/api/run", body)
+        assert status == 200, payload
+        ids.append(payload["job"])
+        # The stub finishes synchronously, so the job is done and undrained.
+
+    # Each new run reaps the finished ones, so the table never accumulates.
+    assert len(web.JOBS) <= 1, f"retained {len(web.JOBS)} finished jobs"
+    assert len(set(ids)) == 3, "job ids should be distinct"
+
+
+def test_reaping_leaves_a_run_that_is_still_going(monkeypatch):
+    """An unfinished run is someone's live stream; it must survive the sweep."""
+    monkeypatch.setattr(web, "JOBS", {})
+
+    finished, running = web.Job(), web.Job()
+    finished.finish()
+    web.JOBS[finished.id] = finished
+    web.JOBS[running.id] = running
+
+    assert web._reap_finished_jobs() == 1
+    assert list(web.JOBS) == [running.id]
+
+
+def test_reaping_an_empty_table_is_a_no_op(monkeypatch):
+    monkeypatch.setattr(web, "JOBS", {})
+    assert web._reap_finished_jobs() == 0

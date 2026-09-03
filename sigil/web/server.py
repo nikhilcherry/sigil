@@ -56,6 +56,25 @@ class Job:
 
 JOBS: dict[str, Job] = {}
 
+
+def _reap_finished_jobs() -> int:
+    """Drop runs that finished and were never fully streamed.
+
+    `_stream` removes a job in a finally, which covers a viewer navigating away
+    mid-stream. It does not cover a client that starts a run and never connects
+    to the stream at all - there is nothing to run the finally. That job, and
+    every event the pipeline queued on it, is then retained for the life of the
+    process, so repeated runs without a listener grow the server without bound.
+
+    Reaping here rather than on a timer keeps it to one rule with no background
+    thread: a job still in the table with `done` set was never drained, and the
+    only client who could have drained it has gone.
+    """
+    stale = [job_id for job_id, job in JOBS.items() if job.done.is_set()]
+    for job_id in stale:
+        JOBS.pop(job_id, None)
+    return len(stale)
+
 # Where the last uploaded probe was written. Re-verification needs the actual
 # image, not the bundle's description of it, and the browser only sends it once.
 LAST_PROBE: Path | None = None
@@ -252,6 +271,7 @@ class Handler(BaseHTTPRequestHandler):
         global LAST_PROBE
         LAST_PROBE = probe_path
 
+        _reap_finished_jobs()
         job = Job()
         JOBS[job.id] = job
         threading.Thread(
