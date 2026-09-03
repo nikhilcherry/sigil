@@ -408,3 +408,82 @@ def test_calibrate_show_exits_non_zero_when_nothing_is_measured(monkeypatch,
 
     monkeypatch.setattr(cal, "CALIBRATION_PATH", tmp_path / "absent.json")
     assert CliRunner().invoke(cli, ["calibrate", "--show"]).exit_code != 0
+
+
+# ------------------------------------------------- anchor as its own stage
+
+
+def test_anchor_records_an_existing_bundle_and_refuses_it_twice(evidence, cfg,
+                                                                tmp_path):
+    """A documented stage command, and the append-only claim in miniature.
+
+    `sigil run` anchors as part of the pipeline; this is the path someone takes
+    when the bundle already exists, and the second call is what makes the
+    record tamper-evident rather than merely tamper-resistant.
+    """
+    path = tmp_path / "evidence.json"
+    path.write_bytes(evidence.canonical_json())
+
+    first = CliRunner().invoke(cli, ["anchor", "-e", str(path)])
+    assert first.exit_code == 0, first.output
+    assert "gas used" in first.output
+    assert ChainClient(cfg).lookup(evidence.evidence_hash()) is not None
+
+    second = CliRunner().invoke(cli, ["anchor", "-e", str(path)])
+    assert second.exit_code == 0, second.output
+    assert "already anchored" in second.output
+
+
+def test_anchor_on_a_missing_bundle_is_a_message_not_a_traceback(tmp_path):
+    result = CliRunner().invoke(cli, ["anchor", "-e", str(tmp_path / "none.json")])
+    assert result.exit_code != 0
+    assert "Traceback" not in result.output
+    assert "evidence bundle not found" in result.output
+
+
+# ----------------------------------------------------------- index info
+
+
+def test_index_info_exits_non_zero_without_an_index(monkeypatch, tmp_path):
+    """scripts/demo.sh branches on this exit code.
+
+    A fresh clone has no index, and the demo decides whether to show the
+    identify path by asking this command - so the code is a contract, not an
+    incidental detail.
+    """
+    import sigil.identify as ident
+
+    monkeypatch.setattr(ident, "INDEX_VECTORS", tmp_path / "absent.npz")
+    monkeypatch.setattr(ident, "INDEX_META", tmp_path / "absent.json")
+
+    result = CliRunner().invoke(cli, ["index", "info"])
+    assert result.exit_code != 0
+    assert "Traceback" not in result.output
+    assert "sigil index build" in result.output
+
+
+def test_index_info_reports_what_the_index_holds(monkeypatch, tmp_path):
+    import json as _json
+
+    import numpy as np
+
+    import sigil.identify as ident
+
+    vectors = tmp_path / "v.npz"
+    meta = tmp_path / "m.json"
+    np.savez(vectors, vectors=np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32))
+    meta.write_text(_json.dumps({
+        "backend": "insightface", "model": "buffalo_l/w600k_r50", "count": 2,
+        "langs": ["en"], "months": 3,
+        "identities": [
+            {"name": "A", "qid": "Q1", "image_url": "https://x", "source": "en.wikipedia"},
+            {"name": "B", "qid": "Q2", "image_url": "https://y", "source": "en.wikipedia"},
+        ],
+    }))
+    monkeypatch.setattr(ident, "INDEX_VECTORS", vectors)
+    monkeypatch.setattr(ident, "INDEX_META", meta)
+
+    result = CliRunner().invoke(cli, ["index", "info"])
+    assert result.exit_code == 0, result.output
+    assert "2" in result.output
+    assert "insightface" in result.output

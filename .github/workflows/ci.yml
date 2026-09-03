@@ -53,12 +53,12 @@ jobs:
         # nothing measures, which is most of what this project is about - so
         # the coverage figure is a gate rather than a sentence in the README.
         #
-        # 93, not the 94 the README quotes, and the gap is this job's own
+        # 94, not the 95 the README quotes, and the gap is this job's own
         # install: without the insightface extra, that backend is never loaded
-        # and never covered. Measured 93.43% here against 94.36% with it.
+        # and never covered. Measured 94.80% here against 95.75% with it.
         run: >
           pytest -m "not network" -q
-          --cov=sigil --cov-report=term-missing --cov-fail-under=93
+          --cov=sigil --cov-report=term-missing --cov-fail-under=94
 
   live:
     # Third-party APIs are the realistic breakage here, so they are checked on a
