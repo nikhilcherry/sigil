@@ -839,6 +839,17 @@ on yourself, on a consenting subject, or on a public figure for a demonstration.
   than reasoned about; a lint-style test guards the shape, since pytest cannot
   run the page.
 
+- **The weights that decide every verdict are pinned by hash.** The ONNX models
+  are downloaded on first use, and they determine every embedding — so every
+  match, every similarity and every hash anchored on chain. A substituted model
+  changes every answer this tool gives while leaving the pipeline, the tests
+  and the chain records all looking correct. `scripts/fetch_models.sh`
+  previously accepted any file over 10 KB; it now verifies a pinned SHA256,
+  deletes a file that fails and exits non-zero. Demonstrated with a 19,500-byte
+  substitute, which the old size check would have accepted. The insightface
+  pack is fetched by that library rather than by this repo, so its integrity is
+  theirs; the opencv path is the one a clean clone actually uses.
+
 - **A candidate URL is chosen by a third party, so it is checked before it is
   fetched.** Every image this tool downloads is at an address supplied by
   someone else — an AppView response, whatever Google's web index returned — and
