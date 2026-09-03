@@ -138,6 +138,13 @@ button:disabled{opacity:.34;cursor:not-allowed}
 .cand .s em{font-style:normal;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--faint)}
 .cand.hit img{border-color:var(--amber);filter:none;box-shadow:0 0 0 1px var(--amber),0 0 22px rgba(255,178,36,.28)}
 .cand.hit .s{color:var(--amber)}
+/* A candidate that is the probe's own photograph again is dimmed: its score is
+   near 1.0 because it is the same picture, which is the weaker claim. */
+.cand.copy img{opacity:.45}
+.cand .claim{font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cand.copy .claim{color:var(--dim)}
+.cand.anchored img{border-color:var(--amber);filter:none;box-shadow:0 0 0 2px var(--amber),0 0 26px rgba(255,178,36,.45)}
+.cand.anchored .claim{color:var(--amber)}
 
 /* ---------- match ---------- */
 .match{display:grid;grid-template-columns:132px minmax(0,1fr);gap:16px;padding:14px}
@@ -297,6 +304,8 @@ footer{margin-top:34px;padding-top:16px;border-top:1px solid var(--rule);color:v
           <dt>similarity</dt><dd><span class="big" id="m-sim">—</span> <span style="color:var(--faint);font-size:11px" id="m-thr"></span></dd>
           <dt>account</dt><dd id="m-acct">—</dd>
           <dt>post</dt><dd id="m-post">—</dd>
+          <dt>claim</dt><dd id="m-claim">—</dd>
+          <dt>picture vs probe</dt><dd id="m-photo" style="color:var(--dim);font-size:11px">—</dd>
           <dt>found via</dt><dd id="m-via" style="color:var(--dim);font-size:11px">—</dd>
           <dt>evidence</dt><dd class="hash" id="m-hash">—</dd>
         </dl>
@@ -532,12 +541,26 @@ function addCandidate(c){
 
   // Re-render the top slice only; a long run can score hundreds of images and
   // rebuilding all of them on every event makes the page crawl.
+  renderSheet();
+}
+
+// Which image ended up anchored. Not the top score - a social account's own
+// photograph outranks a higher cosine on the probe's picture republished - so
+// the grid has to say which one it was rather than let the reader assume.
+let anchoredUrl = null;
+
+function renderSheet(){
   const top = cands.slice(0, 36);
-  $("sheet").innerHTML = top.map(x => `
-    <div class="cand ${x.hit ? "hit" : ""}">
+  $("sheet").innerHTML = top.map(x => {
+    const copy = x.claim === "provenance";
+    const mine = anchoredUrl && x.image_url === anchoredUrl;
+    return `
+    <div class="cand ${x.hit ? "hit" : ""} ${copy ? "copy" : ""} ${mine ? "anchored" : ""}">
       <img src="${x.image_url}" loading="lazy" alt="">
       <div class="s"><span>${x.similarity.toFixed(3)}</span><em>@${x.handle || "web"}</em></div>
-    </div>`).join("");
+      <div class="claim">${mine ? "◀ anchored" : (copy ? "same photo" : "different photo")}</div>
+    </div>`;
+  }).join("");
 }
 
 /* ---------- results ---------- */
@@ -572,6 +595,14 @@ function showMatch(e){
   $("m-acct").innerHTML = `${e.match.author_display_name || ""} <span style="color:var(--amber)">@${e.match.author_handle}</span>`;
   $("m-post").innerHTML = `<a href="${e.match.post_url}" target="_blank" rel="noopener">${e.match.post_url}</a>`;
   $("m-via").textContent = e.match.discovered_via;
+  const identity = e.match.claim === "identity";
+  $("m-claim").innerHTML = identity
+    ? '<span style="color:var(--amber)">identity</span> — a different photograph of the same face'
+    : '<span style="color:var(--dim)">provenance</span> — the probe\'s own photograph, published here';
+  $("m-photo").textContent =
+    `${(e.match.probe_photo_similarity ?? 0).toFixed(4)} (whole image, no face model)`;
+  anchoredUrl = e.match.image_url;
+  renderSheet();
   typeHash($("m-hash"), e.hash);
 }
 
