@@ -14,7 +14,6 @@ from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-from ..concurrency import prefetch
 from ..config import Config
 from .base import Candidate, ProviderTrace
 from .http import make_session
@@ -148,28 +147,40 @@ class BlueskyProvider:
         # recall for any run whose budget is smaller than what Bluesky offers.
         # Which is every run: `max_images` defaults to 200 and 25 actors at 20
         # posts each can propose ten times that.
-        for actor in actors:
-            if actor.get("avatar"):
-                yield Candidate(
-                    platform="bluesky",
-                    source_kind="social",
-                    image_url=actor["avatar"],
-                    post_url=f"https://bsky.app/profile/{actor.get('handle', '')}",
-                    post_uri=f"at://{actor.get('did', '')}/app.bsky.actor.profile/self",
-                    author_handle=actor.get("handle", ""),
-                    author_did=actor.get("did", ""),
-                    author_display_name=actor.get("displayName", "") or "",
-                    text=(actor.get("description") or "")[:500],
-                    created_at=actor.get("createdAt", "") or "",
-                    discovered_via="app.bsky.actor.searchActors:avatar",
-                )
-
         # The feeds are fetched concurrently but consumed in actor order, and
         # the trace is written here rather than in the workers, so both the
         # candidate stream and the audit record stay identical to a serial run.
         with ThreadPoolExecutor(max_workers=FEED_WORKERS) as pool:
-            for actor, feed in prefetch(pool, actors, fetch_feed, FEED_WORKERS * 2):
-                items = (feed or {}).get("feed", [])
+            # Submitted before the first avatar is yielded, so the feeds are
+            # already in flight while the encoder works through them. Ordering
+            # avatars first would otherwise idle the network for as long as it
+            # takes to encode twenty-odd of them.
+            #
+            # Every one at once rather than through `prefetch`'s bounded
+            # window, which exists to stop thousands of *image* downloads
+            # piling up in memory ahead of a slow consumer. These are at most
+            # a hundred small JSON responses - the actor search is capped
+            # there - so the window would only delay them.
+            pending = [(actor, pool.submit(fetch_feed, actor)) for actor in actors]
+
+            for actor in actors:
+                if actor.get("avatar"):
+                    yield Candidate(
+                        platform="bluesky",
+                        source_kind="social",
+                        image_url=actor["avatar"],
+                        post_url=f"https://bsky.app/profile/{actor.get('handle', '')}",
+                        post_uri=f"at://{actor.get('did', '')}/app.bsky.actor.profile/self",
+                        author_handle=actor.get("handle", ""),
+                        author_did=actor.get("did", ""),
+                        author_display_name=actor.get("displayName", "") or "",
+                        text=(actor.get("description") or "")[:500],
+                        created_at=actor.get("createdAt", "") or "",
+                        discovered_via="app.bsky.actor.searchActors:avatar",
+                    )
+
+            for actor, future in pending:
+                items = (future.result() or {}).get("feed", [])
                 self.trace.record("app.bsky.feed.getAuthorFeed", feed_params(actor), len(items))
                 for item in items:
                     post = item.get("post") or {}

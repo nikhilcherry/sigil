@@ -412,6 +412,7 @@ class FakeBskySession:
         self.lock = threading.Lock()
         self.in_flight = 0
         self.max_in_flight = 0
+        self.feed_calls_started = 0
 
     def get(self, url, params=None, headers=None, timeout=None):
         import time
@@ -419,6 +420,8 @@ class FakeBskySession:
         with self.lock:
             self.in_flight += 1
             self.max_in_flight = max(self.max_in_flight, self.in_flight)
+            if "getAuthorFeed" in url:
+                self.feed_calls_started += 1
         try:
             time.sleep(self.delay)
             if "searchActors" in url:
@@ -498,6 +501,30 @@ def test_every_avatar_comes_before_any_feed_image():
     feeds = [i for i, v in enumerate(vias) if v == "app.bsky.feed.getAuthorFeed"]
     assert avatars and feeds
     assert max(avatars) < min(feeds), "a feed image was offered before an avatar"
+
+
+def test_the_feeds_are_already_in_flight_before_the_first_avatar_is_yielded():
+    """Ordering avatars first must not idle the network behind them.
+
+    The avatars are free - they arrived with the actor search - but they are
+    also slow to consume, because each one is a face to encode. If the feed
+    round trips only began once they were exhausted, the single largest wait
+    in a run would be pushed to the end of it.
+    """
+    import time
+
+    provider = _bsky_provider(_actors(8), delay=0.05)
+    stream = provider.candidates("q")
+
+    first = next(stream)
+    assert first.discovered_via.endswith(":avatar")
+    # The submissions happen before the first yield; give the pool a moment to
+    # actually start them rather than asserting on a race.
+    time.sleep(0.02)
+    assert provider.session.feed_calls_started > 0, (
+        "no feed request had been issued by the time the first avatar arrived"
+    )
+    list(stream)
 
 
 def test_the_trace_stays_in_actor_order_despite_concurrency():
