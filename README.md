@@ -188,7 +188,20 @@ what makes the call safe.
 Naming a stranger is a higher-stakes call than confirming a match you were
 already looking for, so this stage uses a stricter bar (0.45 vs 0.38 cosine).
 Below it, the pipeline says it does not know rather than guessing — a wrong name
-would send the social search after the wrong person entirely.
+would send the social search after the wrong person entirely. That bar is
+measured, not asserted, and the measurement is unflattering: at 0.45 it still
+names **1.73%** of faces the index does not contain, because one query is 3,583
+chances to be wrong
+([§5](#5--calibration--what-the-threshold-actually-costs)). At 0.38 it would be
+4.16%.
+
+**The built index is deliberately not shipped.** It is 3,583 face embeddings of
+real, named people, and committing that to a public repository is the same
+irreversible biometric disclosure this project refuses to put on a chain — the
+difference between a git history and an append-only ledger is not one that
+matters to the person whose face is in it. So `models/` is gitignored and a
+clone builds its own from public sources, or runs with an explicit `-q` and no
+index at all.
 
 **This does not make it a whole-web face search.** The index covers people
 notable enough for a well-viewed encyclopaedia article. A private individual is
