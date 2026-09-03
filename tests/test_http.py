@@ -177,6 +177,33 @@ def test_a_name_that_does_not_resolve_is_refused(monkeypatch):
     assert h.is_public_http_url("https://nope.invalid/x.jpg") is False
 
 
+def test_a_resolver_returning_nothing_is_refused(monkeypatch):
+    """`getaddrinfo` answering with an empty list is not an error, and an
+    empty loop over addresses would otherwise fall through to the trailing
+    `return True` - approving a host precisely because nothing about it could
+    be checked. Nothing on the happy path exercises this, so it is asserted
+    directly rather than assumed from the shape of the code.
+    """
+    import sigil.search.http as h
+
+    monkeypatch.setattr(h.socket, "getaddrinfo", lambda *a, **k: [])
+    assert h.is_public_http_url("https://empty.example/x.jpg") is False
+
+
+def test_an_address_the_resolver_gives_that_will_not_parse_is_refused(monkeypatch):
+    """The guard classifies whatever `getaddrinfo` hands back. A value that is
+    not an address at all cannot be classified, and the only safe reading of an
+    unclassifiable address is to refuse it - the alternative is to skip the one
+    entry that could not be checked and approve the host on the others.
+    """
+    import sigil.search.http as h
+
+    monkeypatch.setattr(h.socket, "getaddrinfo", lambda *a, **k: [
+        (2, 1, 6, "", ("not-an-ip", 0)),
+    ])
+    assert h.is_public_http_url("https://garbled.example/x.jpg") is False
+
+
 def test_a_name_resolving_to_both_public_and_private_is_refused(monkeypatch):
     """A host that answers with a private address as well is not trustworthy."""
     import sigil.search.http as h
