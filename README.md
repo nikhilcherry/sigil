@@ -123,7 +123,15 @@ example images:
 | probe vs. a different person (`control-buttigieg.jpg`) | **−0.02** | below threshold |
 
 Both backends find the same live match on a clean clone, so the fallback is a
-real alternative rather than a degraded mode.
+real alternative rather than a degraded mode. Verified from an actual fresh
+clone on 2026-09-03, with no API keys in the environment and the insightface
+extra not installed: `pip install -e ".[dev]"`, `./scripts/fetch_models.sh`,
+suite green under its own coverage floor, then the documented quickstart
+matched `@aoc.bsky.social` at 0.7411 against the opencv threshold of 0.363 —
+picture-vs-probe 0.0728, so a genuinely different photograph — and anchored at
+114,222 gas. `./scripts/demo.sh` then ran end to end on that clone, skipping
+the identity index and the calibration it has not built yet rather than
+failing on them.
 
 That gap is what makes a fixed threshold defensible, and `tests/test_face.py`
 asserts it on every run so a model or preprocessing change cannot quietly erode
