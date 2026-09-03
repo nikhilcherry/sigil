@@ -187,3 +187,20 @@ def test_it_joins_the_pipeline_only_when_a_key_is_present(monkeypatch):
     cfg.google_vision_key = "k"
     names = [p.name for p in build_providers(cfg, None, b"bytes")]
     assert names == ["bluesky", "google-vision-web"], names
+
+
+def test_the_probe_bytes_never_reach_the_evidence_trace(monkeypatch):
+    """The bundle deliberately holds no image; the trace must not smuggle one.
+
+    This arm is the only one that sends the probe itself to a third party, as
+    base64 in the request body, so it is the only one that could.
+    """
+    provider, session = _provider(monkeypatch, _web())
+
+    list(provider.candidates("ignored"))
+
+    _url, _params, body = session.calls[0]
+    assert body["requests"][0]["image"]["content"], "the probe must still be sent"
+    recorded = str(provider.trace.calls)
+    assert "content" not in recorded
+    assert "probe-bytes" not in recorded
