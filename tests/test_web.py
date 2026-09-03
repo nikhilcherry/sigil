@@ -560,6 +560,86 @@ def test_every_untrusted_field_is_escaped_before_it_reaches_the_page():
     assert not offenders, f"unescaped untrusted fields in the page: {offenders}"
 
 
+# Every interpolation that reaches innerHTML without esc() or safeUrl(),
+# reviewed one by one. The allowlist above names fields known to be hostile;
+# this names the exceptions instead, which is the direction that survives
+# somebody rendering a field nobody thought to add to a list. That is not
+# hypothetical - `r.after` is the tail of `match.text`, which is a Bluesky
+# account's own description, and it was interpolated raw for exactly that
+# reason: no list mentioned it.
+REVIEWED_SAFE_INTERPOLATIONS = {
+    # Numeric formatting. Produces digits, a dot and possibly a minus sign.
+    "e.best.toFixed(4)",
+    "e.threshold.toFixed(3)",
+    "h.similarity.toFixed(4)",
+    "x.similarity.toFixed(3)",
+    "e.examined",
+    # Ternaries over string literals this file owns end to end.
+    'copy ? "copy" : ""',
+    'h.accepted ? "ok" : ""',
+    'mine ? "anchored" : ""',
+    'x.hit ? "hit" : ""',
+    'mine ? "\u25c0 anchored" : (copy ? "same photo" : "different photo")',
+    "cls",
+    "txt",
+    # The second element of each CHECKS pair, a literal in this same file.
+    "label",
+    # keccak hex this code computed, and one character sliced out of it.
+    "a",
+    "b",
+    "ch",
+    # Escaped per item already; the join is the markup, deliberately.
+    'v.notes.map(esc).join("<br>")',
+}
+
+
+def _html_interpolations(html: str) -> list[str]:
+    """Interpolations inside template literals that build markup."""
+    import re
+
+    out = []
+    for lit in re.findall(r"`(?:[^`\\]|\\.)*`", html, re.S):
+        if "<" not in lit:
+            continue
+        for expr in re.findall(r"\$\{(.*?)\}", lit, re.S):
+            out.append(" ".join(expr.split()))
+    return out
+
+
+def test_no_interpolation_reaches_the_page_unescaped_by_default():
+    """Deny by default, so a new field is escaped or explicitly justified.
+
+    The earlier lint asked "is this one of the fields we know to be hostile?",
+    which is only ever as good as the list. This asks the opposite question -
+    "has this been escaped, or written down as safe and why?" - so the burden
+    falls on whoever adds the interpolation rather than on this file having
+    predicted its name.
+
+    It caught a real one: the tamper preview rendered `${r.field}` and
+    `${r.after}` raw, and `after` is the last 60 characters of `match.text` -
+    a Bluesky account's own description, set by its owner. The demo's Tamper
+    button posts `field: "match.text"` with no input from the operator, so one
+    click on the page rendered a third party's text as HTML, in the page that
+    has /api/run and /api/tamper one fetch away.
+    """
+    from pathlib import Path
+
+    html = (Path(__file__).resolve().parent.parent
+            / "sigil" / "web" / "index.html").read_text()
+
+    offenders = sorted({
+        expr for expr in _html_interpolations(html)
+        if "esc(" not in expr
+        and "safeUrl(" not in expr
+        and expr not in REVIEWED_SAFE_INTERPOLATIONS
+    })
+    assert not offenders, (
+        "interpolation reaches innerHTML unescaped and is not reviewed: "
+        f"{offenders}. Wrap it in esc(), or add it to "
+        "REVIEWED_SAFE_INTERPOLATIONS with the reason it cannot carry markup."
+    )
+
+
 def test_anything_becoming_an_href_goes_through_the_url_allowlist():
     """`javascript:` in an href is the same hole with an extra click."""
     import re

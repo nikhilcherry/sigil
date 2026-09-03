@@ -727,7 +727,7 @@ $("tamper").onclick = async () => {
     $("m-hash").innerHTML = marked;
 
     $("errbox").innerHTML = `<div class="err">
-      <b>Tampered:</b> <code>${r.field}</code> changed to “…${r.after}”<br><br>
+      <b>Tampered:</b> <code>${esc(r.field)}</code> changed to “…${esc(r.after)}”<br><br>
       <span style="color:var(--dim)">anchored</span> ${a}<br>
       <span style="color:var(--dim)">tampered</span> ${b}<br><br>
       One character changed, and the bundle no longer has a record on chain.
