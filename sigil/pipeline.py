@@ -75,6 +75,7 @@ def scan_probe(image_bytes: bytes, cfg: Config) -> tuple[Face, ProbeRef, Any]:
         model=encoder.model,
         bbox=face.bbox,
         det_score=round(face.det_score, 4),
+        provider=getattr(encoder, "provider", ""),
     )
     return face, ref, encoder
 

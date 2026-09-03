@@ -39,6 +39,10 @@ class ProbeRef:
     model: str
     bbox: list[int]
     det_score: float
+    # Which onnxruntime execution provider produced `embedding_sha256`. The
+    # digest is provider-specific even though the embedding is, for every
+    # practical purpose, the same - see the SCHEMA note in sigil/__init__.py.
+    provider: str = ""
 
 
 @dataclass

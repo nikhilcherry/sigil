@@ -25,7 +25,9 @@ def probe_panel(ref, path: str) -> None:
     t.add_column(style="dim", justify="right")
     t.add_column()
     t.add_row("source", path)
-    t.add_row("backend", f"{ref.backend} [dim]({ref.model})[/dim]")
+    t.add_row("backend", f"{ref.backend} [dim]({ref.model})[/dim]"
+                         + (f" [dim]on {ref.provider.replace('ExecutionProvider', '')}"
+                            f"[/dim]" if ref.provider else ""))
     t.add_row("face bbox", str(ref.bbox))
     t.add_row("detector score", f"{ref.det_score:.4f}")
     t.add_row("image sha256", ref.image_sha256)

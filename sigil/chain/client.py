@@ -48,6 +48,45 @@ class Verification:
         return bool(core) and all(optional)
 
 
+def _provider_hint(evidence: Evidence, got: str) -> list[str]:
+    """Explain a digest mismatch that is not the accusation it looks like.
+
+    The same image encoded on CPU and on CUDA gives embeddings that agree to
+    0.9996 - identical for any threshold - and sha256 digests with nothing in
+    common. So a bundle anchored on one provider cannot re-encode on the other,
+    and the check above is exact by necessity: the bundle records the digest
+    rather than the vector, precisely so it carries no biometric.
+
+    Saying "does not re-encode" and stopping would read as "this is the wrong
+    photograph" or "someone edited this", when the photograph is right and the
+    bundle is intact.
+    """
+    if not got or got == evidence.probe.embedding_sha256:
+        return []
+
+    recorded = evidence.probe.provider
+    from ..face.backends.insight import _want_gpu  # noqa: PLC0415
+
+    if not recorded:
+        return [
+            "this bundle predates the field recording which execution provider "
+            "encoded it. If it was produced on a different one - CPU against "
+            "CUDA - the digests differ for the same image, which is not a "
+            "tampering signal. `sigil backends` reports the current one."
+        ]
+
+    current = "CUDAExecutionProvider" if _want_gpu() else "CPUExecutionProvider"
+    if recorded != current:
+        return [
+            f"this bundle's embedding was produced on {recorded} and this run "
+            f"is on {current}. The same image gives different digests on "
+            "different providers, so this is a provider mismatch rather than a "
+            "different photograph or an altered bundle. Re-verify on "
+            f"{recorded}, or re-run the pipeline here."
+        ]
+    return []
+
+
 class ChainClient:
     def __init__(self, cfg: Config) -> None:
         self.cfg = cfg
@@ -296,6 +335,7 @@ class ChainClient:
                     "the supplied probe image does not re-encode to the embedding "
                     "recorded in this bundle"
                 )
+                v.notes.extend(_provider_hint(evidence, probe_embedding_sha256))
 
         if recheck_source:
             blob = self._fetch_source(evidence, v)

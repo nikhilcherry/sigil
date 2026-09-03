@@ -122,12 +122,37 @@ build, failed to load it, and served CPU while `get_available_providers()`
 still listed it. That is precisely why `sigil backends` reads the provider back
 off the loaded session instead of reporting what was asked for.
 
-**Mixing providers is safe**, which is what makes the hour-long index build
-portable. The same 40 images encoded on both give a cosine agreement of 0.9996
-at worst and 0.99996 on average — float noise, two orders of magnitude below
-the 0.06 that merely rescaling an image costs. End to end: the committed probe
-against the same CPU-built index names itself at 0.9720/0.2105 on CPU and
-0.9722/0.2107 on CUDA.
+**Mixing providers is safe for everything that compares similarities**, which
+is what makes the hour-long index build portable. The same 40 images encoded on
+both give a cosine agreement of 0.9996 at worst and 0.99996 on average — float
+noise, two orders of magnitude below the 0.06 that merely rescaling an image
+costs. End to end: the committed probe against the same CPU-built index names
+itself at 0.9720/0.2105 on CPU and 0.9722/0.2107 on CUDA.
+
+**It is not safe for the one check that compares a digest.** The bundle records
+`embedding_sha256` rather than the vector — deliberately, so it carries no
+biometric — so `sigil verify --probe` has only an exact comparison available,
+and sha256 turns that 0.9996 agreement into two digests with nothing in common.
+Anchor a bundle on CPU, verify it on CUDA, and `probe re-encodes` **fails on an
+intact bundle and the correct photograph**. That is real and it is reproducible:
+
+```
+$ SIGIL_GPU=0 sigil verify -e evidence.json --probe examples/probe-aoc.jpg
+    probe re-encodes  PASS            → VERIFIED
+
+$ sigil verify -e evidence.json --probe examples/probe-aoc.jpg
+    probe re-encodes  FAIL            → NOT VERIFIED
+    note  this bundle's embedding was produced on CPUExecutionProvider and this
+          run is on CUDAExecutionProvider. The same image gives different digests
+          on different providers, so this is a provider mismatch rather than a
+          different photograph or an altered bundle.
+```
+
+The check stays exact, because loosening an integrity check to paper over this
+would be the wrong trade. Instead the bundle records which provider encoded it
+(that is what moved the schema to `v3`) so the failure can say what it actually
+is. A bundle from before that field existed gets a weaker version of the same
+note.
 
 None of this is committed. `pyproject.toml` depends on plain `onnxruntime`,
 CI and a clean clone run on CPU, and the venv is gitignored — so the numbers
@@ -145,16 +170,19 @@ Stage 1/5 · Face scan
   embedding sha256  b279a48ef65f075f…
 
 Stage 2/5 · Web / social search
-  images fetched     185
-  images with a face  45
-  faces compared     151
-  duplicate images    17  (score reused)
-  live API calls      10
+  providers          bluesky, google-vision-web
+  images fetched     168
+  images with a face  90
+  faces compared     106
+  duplicate images     7  (score reused)
+  live API calls       7
 
    #    similarity   claim            account                  found via
    1        0.9952   same photo       www.influencewatch.org   vision:pagesWithMatching
    2        0.9935   same photo       aflcio.org               vision:pagesWithMatching
+   3        0.9931   same photo       www.ebay.com             vision:pagesWithMatching
    6        0.9892   different photo  images.squarespace-cdn   vision:fullMatchingImages
+   7        0.9892   same photo       pbs.twimg.com            vision:fullMatchingImages
   70 ◀      0.7596   different photo  aoc.bsky.social          actor.searchActors:avatar
 
   ◀ anchored. A social post outranks an open-web page, and a different
@@ -699,7 +727,7 @@ verifying against new probes — pick one and keep it).
 ## Tests
 
 ```bash
-pytest -m "not network"   # 423 offline tests, 96% line coverage
+pytest -m "not network"   # 427 offline tests, 96% line coverage
 pytest -m network         # 3 tests against the live API and a live chain
 ```
 

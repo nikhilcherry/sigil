@@ -557,3 +557,64 @@ def test_the_rpc_backend_reuses_a_configured_contract_rather_than_redeploying():
 
     rpc.cfg = _rpc_cfg(contract_address=None)
     assert rpc.deployed_address() is None
+
+
+# ------------------------------------- a digest mismatch that is not tampering
+
+
+def test_a_provider_mismatch_is_explained_not_blamed(cfg, evidence, monkeypatch):
+    """The same photograph, an intact bundle, and a failing check.
+
+    CPU and CUDA give embeddings agreeing to 0.9996 - identical for any
+    threshold - and sha256 digests with nothing in common. The bundle records
+    the digest rather than the vector, deliberately, so `--probe` has only an
+    exact comparison available. Saying "does not re-encode" and stopping would
+    read as the wrong photograph or an edited bundle; it is neither.
+    """
+    import sigil.chain.client as client_mod
+
+    evidence.probe.provider = "CPUExecutionProvider"
+    client = _anchored(cfg, evidence)
+    monkeypatch.setattr(client_mod, "_want_gpu", lambda: True, raising=False)
+    monkeypatch.setattr("sigil.face.backends.insight._want_gpu", lambda: True)
+
+    v = client.verify(evidence, probe_embedding_sha256="ff" * 32)
+
+    assert v.probe_matches is False
+    joined = " ".join(v.notes)
+    assert "CPUExecutionProvider" in joined and "CUDAExecutionProvider" in joined
+    assert "rather than a different photograph or an altered bundle" in joined
+    assert "Re-verify on CPUExecutionProvider" in joined
+
+
+def test_a_mismatch_on_the_same_provider_gets_no_such_excuse(cfg, evidence,
+                                                             monkeypatch):
+    """A genuinely wrong probe must not be handed a reassuring explanation."""
+    evidence.probe.provider = "CPUExecutionProvider"
+    client = _anchored(cfg, evidence)
+    monkeypatch.setattr("sigil.face.backends.insight._want_gpu", lambda: False)
+
+    v = client.verify(evidence, probe_embedding_sha256="ff" * 32)
+
+    assert v.probe_matches is False
+    joined = " ".join(v.notes)
+    assert "does not re-encode" in joined
+    assert "provider mismatch" not in joined
+
+
+def test_a_bundle_without_the_provider_field_gets_the_weaker_note(cfg, evidence):
+    """v1 and v2 bundles cannot say which provider made them."""
+    evidence.probe.provider = ""
+    v = _anchored(cfg, evidence).verify(evidence,
+                                        probe_embedding_sha256="ff" * 32)
+    joined = " ".join(v.notes)
+    assert "predates the field" in joined
+    assert "not a tampering signal" in joined
+
+
+def test_a_matching_probe_says_nothing_about_providers(cfg, evidence):
+    evidence.probe.provider = "CPUExecutionProvider"
+    v = _anchored(cfg, evidence).verify(
+        evidence, probe_embedding_sha256=evidence.probe.embedding_sha256)
+    assert v.probe_matches is True
+    assert not any("provider" in n for n in v.notes)
