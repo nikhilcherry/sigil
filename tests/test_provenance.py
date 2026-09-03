@@ -344,3 +344,28 @@ def test_every_candidate_carries_its_rank_among_all_of_them(monkeypatch):
     result = m.search_and_match(OneFace(), probe, [Provider()], "q", 0.38,
                                 Config())
     assert [s.rank for s in result.ranked] == [1, 2, 3, 4, 5]
+
+
+def test_the_cutoff_sits_in_the_gap_the_measurements_left():
+    """Guards the two populations the cutoff was placed between.
+
+    0.6615 was the highest genuinely different photograph seen on Bluesky in
+    695 candidates; 0.7915 was the lowest crop of the probe. A cutoff that
+    stops separating those is a cutoff that has drifted.
+    """
+    assert claim_for(0.6615) == IDENTITY, "a different photograph got demoted"
+    assert claim_for(0.7915) == PROVENANCE, "a crop of the probe passed as independent"
+    assert claim_for(0.8501) == PROVENANCE
+    assert claim_for(0.0213) == IDENTITY, "the true match on the demo probe"
+
+
+def test_a_reposted_crop_no_longer_outranks_an_independent_photograph():
+    """The demo's no-query path, in miniature.
+
+    A fan account reposting a crop of the probe scored 0.9713 by face against
+    the official account's 0.7596, so cosine alone preferred it. The crop is a
+    republication, so it is the weaker claim however well it scores.
+    """
+    crop = _scored(0.9713, 0.7915, "fanaccount", kind="social")
+    official = _scored(0.7596, 0.0213, "aoc", kind="social")
+    assert pick_best([crop, official], threshold=0.38) is official

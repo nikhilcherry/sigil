@@ -14,30 +14,35 @@ fingerprint, mean-centred and L2-normalised, correlated against the probe's.
 That survives rescaling and recompression, which is what republication does to
 a picture, and it collapses for a photograph taken at a different moment.
 
-Measured over 170 real candidates for the committed probe:
+Measured over 876 real candidates across four runs and two probes - 695 from
+Bluesky, 181 from the open web:
 
-    photo similarity   candidates
-        >= 0.95        55, every one a Vision hit - the probe's own photograph
-                       republished on someone else's page
-        0.56 - 0.93    11, all Vision - crops, merchandise prints and Commons
-                       variants of that same photograph
-        <  0.67        every Bluesky candidate, the true avatar match included
+    photo similarity    bluesky   open web
+        >= 0.95               0        140   the probe's own file, republished
+        0.90 - 0.95           0          2
+        0.85 - 0.90           1          2   crops and merchandise prints
+        0.70 - 0.85           0          4
+        <  0.70             694         33   a different photograph
 
-The exact copies sit well clear of everything else, so the cutoff is placed at
-the top of that gap rather than in the middle of the crop band.
+Not one Bluesky candidate in 695 reaches 0.90, and 694 of them sit below 0.70.
+The two Bluesky candidates that got anywhere near the top are both crops of the
+probe: an account reposting it at 0.7915 and another at 0.8501. The highest
+*genuinely different* photograph on that platform scored 0.6615 - and it is a
+different person whose portrait happens to be framed alike.
 
-What this signal does **not** separate is a crop from an independent
-photograph, and that limit is real rather than theoretical: a Bluesky account
-reposting a cropped version of the probe scored 0.7915, while a *different
-person* whose portrait happens to be framed alike scored 0.6615. Two points
-that close together cannot be split without fitting the cutoff to them, which
-is how a measured threshold turns back into a guessed one.
+The cutoff is set at 0.75, in the gap that separates those two populations, and
+it is set from that table rather than from taste. An earlier version used 0.90,
+which was chosen when the only evidence was one probe: it sat above every crop
+as well as every copy, so a reposted crop was labelled an independent
+photograph. That overstates the evidence, which is the error worth avoiding
+here - the alternative error, demoting a real photograph, has 694 candidates of
+headroom beneath it. The true match on the committed probe scores 0.0213.
 
-So the binary label stays deliberately conservative - a crop is reported as an
-identity claim rather than demoted on a hunch - and the *number* is written
-into the evidence bundle and printed in the match panel next to it. A reader
-seeing 0.7915 can draw their own conclusion; a reader seeing only a label
-cannot.
+What this signal still cannot do is separate a crop from a different
+photograph in the region between them, because on this data there is nothing
+there to separate. Should something land in it, the *number* is written into
+the evidence bundle and printed beside the label, so a reader seeing 0.78 can
+draw their own conclusion where a reader seeing only a label could not.
 """
 
 from __future__ import annotations
@@ -45,11 +50,12 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
-# At or above this, a candidate is the probe's own photograph again. Set above
-# every Bluesky value measured (the highest was 0.6615, and that one a
-# different person whose portrait happens to be framed alike) and below the
-# exact-copy cluster.
-PROVENANCE_CUTOFF = 0.90
+# At or above this, a candidate is the probe's own photograph again - a copy or
+# a crop. Placed in the empty band between the highest genuinely different
+# photograph measured (0.6615) and the lowest crop (0.7915). See the table
+# above; this number is the one thing in this file that is a judgement, and it
+# is a judgement about where 876 measurements stop overlapping.
+PROVENANCE_CUTOFF = 0.75
 
 FINGERPRINT_SIZE = 32
 

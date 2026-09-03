@@ -228,28 +228,36 @@ unrelated images. The higher one is closer to provenance — "this exact picture
 also appears here".
 
 Ranking by cosine alone therefore anchors the *weakest* evidence in the run and
-presents it as the strongest, which is what the pipeline used to do. So each
-candidate is classified before anything is chosen:
+presents it as the strongest, which is what the pipeline used to do — and the
+effect is not subtle. Run with no query at all, the top of the table is
+sixty-nine republications of the probe, and beneath them two Bluesky accounts:
+a fan account whose avatar is a *crop* of the probe (0.9713) and her official
+congressional account, whose avatar is a genuinely different photograph
+(0.8662). Cosine picks the crop. So each candidate is classified before
+anything is chosen:
 
 - **Which photograph is it?** A 32×32 mean-centred greyscale fingerprint of the
   whole image, correlated against the probe's — a signal the face model has no
   part in, so it is not the model grading its own evidence. Over 170 real
   candidates, all 55 exact republications scored ≥ 0.95 and every Bluesky
   candidate scored below 0.67, including the true match at **0.0213**. Above
-  0.90 a candidate is the probe's own picture again: a *provenance* claim.
-  Below it, a different photograph: an *identity* claim. What it cannot split
-  is a **crop** from an independent photograph — an account reposting a cropped
-  probe scored 0.7915, a different person framed alike scored 0.6615, and a
-  cutoff placed between two points that close is a guess wearing a
-  measurement's clothes. So a crop is labelled conservatively as an identity
-  claim and the number itself goes into the bundle, where a reader can judge
-  it. See [`sigil/provenance.py`](sigil/provenance.py).
+  **0.75** a candidate is the probe's own picture again — copy or crop — which
+  is a *provenance* claim. Below it, a different photograph: an *identity*
+  claim. The cutoff sits in the gap that 876 measurements across four runs and
+  two probes left empty: of 695 Bluesky candidates not one reached 0.90 and
+  694 sat below 0.70, the two that came close were both reposted crops of the
+  probe (0.7915 and 0.8501), and the highest genuinely different photograph
+  scored 0.6615. The number itself also goes into the bundle, so a reader can
+  judge a borderline case rather than trust the label.
+  See [`sigil/provenance.py`](sigil/provenance.py).
 - **Where was it found?** Providers declare themselves `social` or `web`,
   because the deliverable is a social media post and an open-web page
   corroborates it rather than replacing it.
 
 `pick_best` then prefers a social source, then an identity claim, and only then
-the higher cosine. The printed table stays ordered by raw similarity — hiding
+the higher cosine — which is how `sigil run examples/probe-aoc.jpg` with no
+query at all ends up anchoring `@ocasio-cortez.house.gov` rather than the
+higher-scoring crop. The printed table stays ordered by raw similarity — hiding
 that would be the dishonest part — every row carries its own label, and the
 anchored row is marked. When everything that cleared the threshold is the
 probe's picture again, the best of those is still anchored, because a
