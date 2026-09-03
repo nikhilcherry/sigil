@@ -55,7 +55,7 @@ from .concurrency import prefetch
 from .config import MODELS_DIR, Config
 from .evidence import sha256_hex
 from .face import decode_image, largest_face
-from .identify import Identity, IdentityIndex
+from .identify import Identity, IdentityIndex, vectors_digest
 from .search.http import fetch_image, make_session
 from .search.matcher import PREFETCH_FACTOR, download_workers
 
@@ -378,10 +378,10 @@ def index_digest(index: IdentityIndex) -> str:
 
     The count alone cannot distinguish one index of 3,583 faces from another,
     and the impostor rates describe a specific set of faces rather than a
-    number of them.
+    number of them. Shares its definition with the index's own integrity check
+    so the two can never disagree about what identifies an index.
     """
-    return sha256_hex(np.ascontiguousarray(
-        index.vectors.astype(np.float32)).tobytes())
+    return vectors_digest(index.vectors)
 
 
 def impostor_similarities(index: IdentityIndex) -> tuple[np.ndarray, tuple]:

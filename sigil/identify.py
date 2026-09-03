@@ -51,6 +51,20 @@ SKIP_PREFIXES = ("Special:", "Wikipedia:", "Main_Page", "Portal:", "File:",
                  "Help:", "Category:", "Talk:", "विशेष:", "சிறப்பு:")
 
 
+def vectors_digest(vectors: np.ndarray) -> str:
+    """Content hash of an index's embedding matrix.
+
+    The index is two files - the vectors and the names - written separately and
+    read back together, and vector *i* is only meaningful paired with name *i*.
+    Nothing but this hash can tell a matched pair from two halves of different
+    builds, because a row count cannot: two builds of the same size pair
+    entirely different people.
+    """
+    from .evidence import sha256_hex
+
+    return sha256_hex(np.ascontiguousarray(vectors.astype(np.float32)).tobytes())
+
+
 @dataclass
 class Identity:
     name: str
@@ -283,16 +297,29 @@ def build_index(
         raise RuntimeError("no faces could be encoded - is the network reachable?")
 
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(INDEX_VECTORS, vectors=np.vstack(vectors))
-    INDEX_META.write_text(json.dumps({
+    matrix = np.vstack(vectors)
+
+    # Both files via a temporary and a rename, and the vectors first: the meta
+    # is the commit record, and it names the vectors it belongs to. A build
+    # interrupted between the two writes then leaves an older meta whose hash
+    # does not match the newer vectors, which `load` refuses - rather than a
+    # pair of files from different builds that it would read as one index.
+    tmp_vectors = INDEX_VECTORS.with_name(INDEX_VECTORS.name + ".tmp.npz")
+    np.savez_compressed(tmp_vectors, vectors=matrix)
+    tmp_vectors.replace(INDEX_VECTORS)
+
+    tmp_meta = INDEX_META.with_name(INDEX_META.name + ".tmp")
+    tmp_meta.write_text(json.dumps({
         "backend": encoder.name,
         "model": encoder.model,
         "count": len(kept),
+        "vectors_sha256": vectors_digest(matrix),
         "langs": list(langs),
         "months": months,
         "partial": partial,
         "identities": [i.to_dict() for i in kept],
     }, ensure_ascii=False, indent=1))
+    tmp_meta.replace(INDEX_META)
     say(f"index written: {len(kept)} faces ({encoder.name})"
         + (" · partial, rerun to complete it" if partial else ""))
     return len(kept)
@@ -327,6 +354,28 @@ class IdentityIndex:
             )
         vectors = np.load(INDEX_VECTORS)["vectors"]
         identities = [Identity(**d) for d in meta["identities"]]
+
+        # The two files are written separately, so they can disagree: a build
+        # interrupted between the writes, or one file restored from a different
+        # one. Vector i is only meaningful paired with identity i, so a
+        # mismatch does not degrade the answer - it attaches the wrong person's
+        # name to a face, with full confidence. That is the worst output this
+        # tool can produce, and it is the same reason the backend check above
+        # exists.
+        if len(vectors) != len(identities):
+            raise RuntimeError(
+                f"identity index is inconsistent: {len(vectors)} vectors against "
+                f"{len(identities)} names. The two files are from different "
+                "builds - rebuild with: sigil index build"
+            )
+        expected = meta.get("vectors_sha256")
+        if expected and expected != vectors_digest(vectors):
+            raise RuntimeError(
+                "identity index is inconsistent: the vectors do not match the "
+                "hash recorded when the names were written, so the two files "
+                "are from different builds and every name would be attached to "
+                "the wrong face. Rebuild with: sigil index build"
+            )
         return cls(vectors, identities, meta["backend"], bool(meta.get("partial", False)))
 
     def __len__(self) -> int:

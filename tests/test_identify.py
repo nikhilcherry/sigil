@@ -574,3 +574,150 @@ def test_months_are_zero_padded_so_the_api_accepts_them(monkeypatch):
     got = ident._months(3)
     assert got == ["2026/09", "2026/08", "2026/07"]
     assert all(len(m) == 7 for m in got)
+
+
+# ------------------------------ the index is two files that must correspond
+
+
+def _write_index(tmp_path, monkeypatch, vectors, names, *, hash_them=True):
+    import json as _json
+
+    import numpy as np
+
+    import sigil.identify as ident
+
+    vec_path = tmp_path / "identity-index.npz"
+    meta_path = tmp_path / "identity-index.json"
+    matrix = np.array(vectors, dtype=np.float32)
+    np.savez_compressed(vec_path, vectors=matrix)
+    meta = {
+        "backend": "insightface", "model": "m", "count": len(names),
+        "langs": ["en"], "months": 3,
+        "identities": [{"name": n, "qid": f"Q{i}", "image_url": "https://x",
+                        "source": "en.wikipedia"} for i, n in enumerate(names)],
+    }
+    if hash_them:
+        meta["vectors_sha256"] = ident.vectors_digest(matrix)
+    meta_path.write_text(_json.dumps(meta))
+    monkeypatch.setattr(ident, "INDEX_VECTORS", vec_path)
+    monkeypatch.setattr(ident, "INDEX_META", meta_path)
+    return vec_path, meta_path
+
+
+def test_a_matched_pair_of_index_files_loads(tmp_path, monkeypatch):
+    import sigil.identify as ident
+
+    _write_index(tmp_path, monkeypatch, [[1, 0], [0, 1]], ["A", "B"])
+    index = ident.IdentityIndex.load()
+    assert len(index) == 2
+    assert [i.name for i in index.identities] == ["A", "B"]
+
+
+def test_more_vectors_than_names_is_refused(tmp_path, monkeypatch):
+    """A build interrupted between the two writes leaves exactly this."""
+    import sigil.identify as ident
+
+    _write_index(tmp_path, monkeypatch, [[1, 0], [0, 1], [1, 1]], ["A", "B"],
+                 hash_them=False)
+    with pytest.raises(RuntimeError, match="3 vectors against 2 names"):
+        ident.IdentityIndex.load()
+
+
+def test_the_same_number_of_names_from_a_different_build_is_refused(tmp_path,
+                                                                    monkeypatch):
+    """The case a count cannot catch, and the one that matters.
+
+    Two builds of the same size pair entirely different people, so loading one
+    file from each attaches the wrong person's name to every face - with full
+    confidence, which is the worst output this tool can produce.
+    """
+    import json as _json
+
+    import numpy as np
+
+    import sigil.identify as ident
+
+    vec_path, meta_path = _write_index(
+        tmp_path, monkeypatch, [[1, 0], [0, 1]], ["A", "B"])
+
+    # Same shape, different faces - as a rebuild would produce.
+    np.savez_compressed(vec_path,
+                        vectors=np.array([[0, 1], [1, 0]], dtype=np.float32))
+
+    assert len(_json.loads(meta_path.read_text())["identities"]) == 2
+    with pytest.raises(RuntimeError, match="do not match the hash"):
+        ident.IdentityIndex.load()
+
+
+def test_an_index_written_before_the_hash_existed_still_loads(tmp_path,
+                                                              monkeypatch):
+    """Only the length check applies to it; refusing outright would be worse."""
+    import sigil.identify as ident
+
+    _write_index(tmp_path, monkeypatch, [[1, 0], [0, 1]], ["A", "B"],
+                 hash_them=False)
+    assert len(ident.IdentityIndex.load()) == 2
+
+
+def test_the_build_writes_both_files_through_a_temporary(tmp_path, monkeypatch):
+    """So an interrupted build cannot leave a half-written file in place."""
+    import pathlib
+
+    seen = []
+    real_replace = pathlib.Path.replace
+
+    def spy(self, target):
+        seen.append((self.name, pathlib.Path(target).name))
+        return real_replace(self, target)
+
+    monkeypatch.setattr(pathlib.Path, "replace", spy)
+    _run_build(tmp_path, monkeypatch)
+
+    assert len(seen) == 2, f"expected two atomic renames, saw {seen}"
+    assert all(src.endswith(".tmp") or ".tmp." in src for src, _ in seen), seen
+
+
+def test_the_built_index_records_the_hash_and_reloads(tmp_path, monkeypatch):
+    import json as _json
+
+    import sigil.identify as ident
+
+    meta_path = _run_build(tmp_path, monkeypatch)
+    meta = _json.loads(meta_path.read_text())
+    assert len(meta["vectors_sha256"]) == 64
+    # And the pair it wrote passes its own check.
+    assert len(ident.IdentityIndex.load()) == meta["count"]
+
+
+def _run_build(tmp_path, monkeypatch):
+    """Drive build_index with the network and the encoder stubbed out."""
+    import numpy as np
+
+    import sigil.identify as ident
+
+    vec_path = tmp_path / "identity-index.npz"
+    meta_path = tmp_path / "identity-index.json"
+    monkeypatch.setattr(ident, "INDEX_VECTORS", vec_path)
+    monkeypatch.setattr(ident, "INDEX_META", meta_path)
+    monkeypatch.setattr(ident, "MODELS_DIR", tmp_path)
+
+    people = [ident.Identity(name=f"P{i}", qid=f"Q{i}",
+                             image_url=f"https://x/{i}.jpg", source="en.wikipedia")
+              for i in range(3)]
+    monkeypatch.setattr(ident, "popular_titles", lambda s, langs, months: {"en": {"t"}})
+    monkeypatch.setattr(ident, "resolve_people", lambda s, lang, titles: people)
+    monkeypatch.setattr(ident, "fetch_image", lambda s, u, t: b"bytes")
+    monkeypatch.setattr(ident, "decode_image",
+                        lambda b: np.zeros((8, 8, 3), dtype=np.uint8))
+
+    class Enc:
+        name, model = "insightface", "m"
+
+        def detect_and_encode(self, img):
+            from sigil.face import Face
+
+            return [Face(embedding=np.array([1.0, 0.0], dtype=np.float32),
+                         bbox=[0, 0, 1, 1], det_score=0.9)]
+
+    ident.build_index(Enc(), langs=("en",), months=1)
+    return meta_path
