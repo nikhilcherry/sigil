@@ -713,7 +713,14 @@ on yourself, on a consenting subject, or on a public figure for a demonstration.
 
 - **Search breadth is bounded by cost, not capability.** `SIGIL_MAX_IMAGES`
   defaults to 200. Raising it widens recall and lengthens runtime roughly
-  linearly.
+  linearly, because the run is essentially all inference: **97% of a run's CPU
+  is the detector**, against about 3% waiting on the network. A default run
+  with both arms enabled takes ~50 s on this CPU for 169 images. That ratio is
+  why raising the download worker count buys nothing, and why two plausible
+  optimisations were measured and rejected rather than adopted — a cheap
+  pre-filter in front of the detector (1.24×, and it costs recall) and a
+  fingerprint-keyed score cache (1.5×, and it is unsound). Both are written up
+  where someone would go looking to try them.
 - **SerpAPI needs a hosted probe.** Google Lens matches on a URL, so the
   open-web arm cannot run against a local file.
 
