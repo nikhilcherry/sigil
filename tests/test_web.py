@@ -446,3 +446,64 @@ def test_every_check_the_ui_renders_is_a_key_the_server_actually_sends():
     sent = set(verification_payload(Verification(evidence_hash="0x", anchored=True)))
     missing = rendered - sent
     assert not missing, f"the UI renders checks the server never sends: {missing}"
+
+
+def test_a_probe_that_no_longer_yields_a_face_fails_the_check_not_skips_it(
+    app, cfg, match_ref, monkeypatch, tmp_path
+):
+    """A check that cannot be completed must not read as one that passed.
+
+    The stored probe belongs to the bundle - the digests match - so the check
+    was requested. It just cannot be answered, and "cannot answer" is a
+    failure here rather than a not-run.
+    """
+    from sigil.chain import ChainClient
+    from sigil.pipeline import PipelineError
+    from tests.conftest import EXAMPLE_PROBE
+
+    _blob, ev = _real_probe_evidence(match_ref)
+    ChainClient(cfg).anchor(ev)
+    web.EVIDENCE_PATH.write_bytes(ev.canonical_json())
+    monkeypatch.setattr(web, "LAST_PROBE", EXAMPLE_PROBE)
+
+    def no_face(image_bytes, config):
+        raise PipelineError("no face detected in the probe image")
+
+    monkeypatch.setattr("sigil.pipeline.scan_probe", no_face)
+
+    body = post(app + "/api/verify")[1]
+    assert body["probe_matches"] is False
+    assert body["ok"] is False
+
+
+def get_json(url):
+    """GET returning (status, parsed body), including for error responses.
+
+    The plain `get` helper hands back raw bytes and lets an HTTPError escape,
+    which is what most tests here want; these want the error body.
+    """
+    try:
+        with urllib.request.urlopen(url, timeout=20) as r:
+            return r.status, json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read())
+
+
+def test_an_unknown_route_is_a_json_404_not_a_traceback(app):
+    assert get_json(app + "/api/nope") == (404, {"error": "not found"})
+    assert post(app + "/api/nope", {"x": 1}) == (404, {"error": "not found"})
+
+
+def test_the_evidence_endpoint_serves_the_stored_bundle(app, evidence):
+    web.EVIDENCE_PATH.write_bytes(evidence.canonical_json())
+    status, body = get_json(app + "/api/evidence")
+    assert status == 200
+    assert body["match"]["platform"] == evidence.match.platform
+
+
+def test_the_evidence_endpoint_errors_cleanly_when_there_is_none(app):
+    if web.EVIDENCE_PATH.exists():
+        web.EVIDENCE_PATH.unlink()
+    status, body = get_json(app + "/api/evidence")
+    assert status == 400
+    assert "error" in body and "Traceback" not in body["error"]
