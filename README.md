@@ -699,13 +699,13 @@ verifying against new probes — pick one and keep it).
 ## Tests
 
 ```bash
-pytest -m "not network"   # 393 offline tests, 93% line coverage
+pytest -m "not network"   # 396 offline tests, 94% line coverage
 pytest -m network         # 3 tests against the live API and a live chain
 ```
 
 Those two figures are for the full `.[insight,dev]` install from the
 Quickstart. CI installs `.[dev]` alone — the 300 MB model pack is not worth a
-minute on every push — so it collects 373 and covers 92%, the difference being
+minute on every push — so it collects 383 and covers 93%, the difference being
 the insightface backend it never loads. Both numbers are enforced rather than
 asserted: the test count is checked against the README by the suite itself, and
 CI fails under its own coverage floor.

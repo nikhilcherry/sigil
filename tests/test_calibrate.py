@@ -644,3 +644,101 @@ def test_two_faces_are_enough_to_measure():
     by_qid, _ = _population([0.9], [])
     c = measure(FakeEncoder(), index, by_qid, threshold=0.38)
     assert c.impostor.pairs == 1
+
+
+# ------------------------------------------------------------------- wiring
+
+
+def test_calibrate_wires_the_four_stages_together(monkeypatch):
+    """The one function the CLI calls, and the one nothing else covers.
+
+    Every stage below is tested on its own. What is not otherwise tested is
+    that they are joined up correctly - that the sample really is a prefix of
+    the index, that `born_after` reaches the filter rather than only the
+    report, and that `requested` is the size of the sample rather than of
+    whatever survived it. A mistake in any of those would leave every other
+    test in this file passing.
+    """
+    import numpy as np
+
+    import sigil.calibrate as cal
+
+    index = _index([[1, 0], [0, 1], [1, 0], [0, 1]],
+                   names=["A", "B", "C", "D"])
+    seen = {}
+
+    monkeypatch.setattr(cal.IdentityIndex, "load",
+                        classmethod(lambda cls, enc=None: index))
+    monkeypatch.setattr(cal, "make_session", lambda: "SESSION")
+
+    def fake_sitelinks(session, qids, born_after=cal.BORN_AFTER):
+        seen["sitelinks"] = (session, tuple(qids), born_after)
+        return {q: {"enwiki": f"{q}-en"} for q in qids[:2]}
+
+    def fake_lead_images(session, links, langs=cal.PORTRAIT_LANGS, on_progress=None):
+        seen["lead_images"] = (tuple(sorted(links)), tuple(langs))
+        return {q: {f"https://{q}/1", f"https://{q}/2"} for q in links}
+
+    def fake_encode(encoder, urls, on_progress=None):
+        seen["encode"] = tuple(sorted(urls))
+        return {q: [np.array([1.0, 0.0]), np.array([0.9, 0.436])] for q in urls}
+
+    monkeypatch.setattr(cal, "sitelinks", fake_sitelinks)
+    monkeypatch.setattr(cal, "lead_images", fake_lead_images)
+    monkeypatch.setattr(cal, "encode_portraits", fake_encode)
+
+    said = []
+    result = cal.calibrate(FakeEncoder(), 0.38, limit=3, langs=("en", "fr"),
+                           born_after=1950, on_progress=said.append)
+
+    # The sample is a prefix of the index, capped by limit.
+    assert seen["sitelinks"][1] == ("Q0", "Q1", "Q2")
+    assert seen["sitelinks"][0] == "SESSION"
+    # born_after reaches the filter, not just the report.
+    assert seen["sitelinks"][2] == 1950
+    assert result.born_after == 1950
+    # langs reach the harvest.
+    assert seen["lead_images"][1] == ("en", "fr")
+    assert seen["lead_images"][0] == ("Q0", "Q1")
+    assert seen["encode"] == ("Q0", "Q1")
+    # `requested` is the size of the sample, not of what survived the filter.
+    assert result.sampled_requested == 3
+    assert result.sampled_photographic == 2
+    assert result.threshold == 0.38
+    assert any("3 identities" in m for m in said)
+    assert any("born after 1950" in m for m in said)
+
+
+def test_calibrate_says_nothing_about_an_era_filter_that_is_off(monkeypatch):
+    import numpy as np
+
+    import sigil.calibrate as cal
+
+    index = _index([[1, 0], [0, 1]], names=["A", "B"])
+    monkeypatch.setattr(cal.IdentityIndex, "load",
+                        classmethod(lambda cls, enc=None: index))
+    monkeypatch.setattr(cal, "make_session", lambda: None)
+    monkeypatch.setattr(cal, "sitelinks",
+                        lambda s, q, born_after=None: {"Q0": {"enwiki": "x"}})
+    monkeypatch.setattr(cal, "lead_images",
+                        lambda s, links, langs=(), on_progress=None: {"Q0": {"u"}})
+    monkeypatch.setattr(cal, "encode_portraits",
+                        lambda e, u, on_progress=None: {
+                            "Q0": [np.array([1.0, 0.0]), np.array([0.9, 0.436])]})
+
+    said = []
+    result = cal.calibrate(FakeEncoder(), 0.38, limit=2, born_after=None,
+                           on_progress=said.append)
+    assert result.born_after is None
+    assert not any("born after" in m for m in said)
+
+
+def test_a_lost_api_batch_costs_coverage_not_the_run():
+    """`_get_json` swallows a non-JSON error page, which is the common case."""
+    from sigil.calibrate import _get_json
+
+    class Broken:
+        def get(self, url, params=None, timeout=None):
+            raise ValueError("Expecting value: line 1 column 1")
+
+    assert _get_json(Broken(), "https://x", {}) == {}
