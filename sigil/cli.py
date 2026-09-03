@@ -223,15 +223,16 @@ def verify(evidence_path, chain_backend, probe, recheck_source):
     with _chain_errors():
         client = ChainClient(cfg)
 
-    probe_digest = None
+    probe_digest = probe_bytes = None
     if probe:
-        image_bytes, _ = load_probe_bytes(str(probe), cfg)
-        _, ref, _ = scan_probe(image_bytes, cfg)
+        probe_bytes, _ = load_probe_bytes(str(probe), cfg)
+        _, ref, _ = scan_probe(probe_bytes, cfg)
         probe_digest = ref.embedding_sha256
 
     with _chain_errors():
         v = client.verify(ev, probe_embedding_sha256=probe_digest,
-                          recheck_source=recheck_source)
+                          recheck_source=recheck_source,
+                          probe_image_bytes=probe_bytes)
     report.verification_panel(v, title=f"Verification of {evidence_path.name}")
     sys.exit(0 if v.ok else 1)
 

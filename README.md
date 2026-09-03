@@ -418,7 +418,7 @@ a hand-corrected set is not a measurement.
 sigil verify --probe examples/probe-aoc.jpg --recheck-source
 ```
 
-Five independent checks:
+Six independent checks:
 
 | check | what it proves |
 |---|---|
@@ -427,8 +427,19 @@ Five independent checks:
 | subject commitment | the record refers to *this* face |
 | probe re-encodes *(`--probe`)* | the supplied photo really produces the bundle's embedding |
 | source image intact *(`--recheck-source`)* | the discovered post has not been edited or deleted since |
+| claim re-derives *(both)* | the identity-vs-provenance verdict follows from the two images |
 
 An optional check that was not requested reads as `None`, never as a pass.
+
+The last one is worth separating from the rest. Every other check answers "has
+this bundle been altered", which the hash already largely settles. That one
+answers a question the hash cannot reach: **was the claim ever true?** A bundle
+asserting `identity` — a different photograph of the same face — while pointing
+at a republication of the probe is not tampered with, it is simply false, and
+it would pass every other check. Given the probe and the live source image, the
+verifier recomputes the fingerprint correlation from scratch and checks both
+the number and the verdict it implies. The tool's own assertion is not evidence
+for itself.
 
 **Demonstrating tamper-evidence.** `sigil tamper` alters one field of a bundle:
 

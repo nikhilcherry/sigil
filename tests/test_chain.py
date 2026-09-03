@@ -338,3 +338,125 @@ def test_reset_wipes_the_persisted_state(tmp_path):
     assert not path.exists()
     assert chain.meta == {}
     assert PersistentLocalChain(path).meta == {}
+
+
+# ------------------------------------------------- re-deriving the claim
+
+
+def _anchored(cfg, evidence):
+    client = ChainClient(cfg)
+    client.anchor(evidence)
+    return client
+
+
+def _png(seed, w=120, h=150):
+    import cv2
+    import numpy as np
+
+    rng = np.random.default_rng(seed)
+    img = cv2.resize(rng.integers(0, 256, (8, 8, 3), dtype=np.uint8), (w, h),
+                     interpolation=cv2.INTER_LINEAR)
+    ok, buf = cv2.imencode(".png", img)
+    assert ok
+    return buf.tobytes()
+
+
+def _bundle(evidence, probe_bytes, source_bytes, claim=None):
+    """Point an evidence bundle at two real images, with a truthful claim."""
+    from sigil.evidence import sha256_hex
+    from sigil.face import decode_image
+    from sigil.provenance import claim_for, fingerprint, photo_similarity
+
+    sim = photo_similarity(fingerprint(decode_image(probe_bytes)),
+                           fingerprint(decode_image(source_bytes)))
+    evidence.match.image_sha256 = sha256_hex(source_bytes)
+    evidence.match.probe_photo_similarity = round(sim, 6)
+    evidence.match.claim = claim or claim_for(sim)
+    return evidence
+
+
+def test_the_claim_re_derives_from_the_two_images(cfg, evidence, monkeypatch):
+    """The hash proves nobody edited the claim; this proves it was ever true."""
+    import sigil.chain.client as client_mod
+
+    probe, source = _png(1), _png(2)
+    ev = _bundle(evidence, probe, source)
+    monkeypatch.setattr(client_mod, "fetch_image", lambda s, u, t: source,
+                        raising=False)
+    monkeypatch.setattr("sigil.search.http.fetch_image", lambda s, u, t: source)
+
+    v = _anchored(cfg, ev).verify(ev, recheck_source=True, probe_image_bytes=probe)
+    assert v.source_image_intact is True
+    assert v.claim_reproduces is True
+    assert v.ok
+
+
+def test_a_bundle_claiming_identity_for_a_republication_fails_re_derivation(
+    cfg, evidence, monkeypatch
+):
+    """Internally false rather than altered - the hash cannot see this."""
+    probe = _png(3)
+    ev = _bundle(evidence, probe, probe, claim="identity")
+    # Truthfully the same picture, so the honest claim is provenance; the
+    # recorded similarity is left truthful and only the label is a lie.
+    monkeypatch.setattr("sigil.search.http.fetch_image", lambda s, u, t: probe)
+
+    v = _anchored(cfg, ev).verify(ev, recheck_source=True, probe_image_bytes=probe)
+    assert v.claim_reproduces is False
+    assert not v.ok
+    assert any("makes it 'provenance'" in n for n in v.notes)
+
+
+def test_a_bundle_whose_recorded_similarity_is_invented_fails_re_derivation(
+    cfg, evidence, monkeypatch
+):
+    probe, source = _png(4), _png(5)
+    ev = _bundle(evidence, probe, source)
+    ev.match.probe_photo_similarity = 0.5  # nothing produced this
+    monkeypatch.setattr("sigil.search.http.fetch_image", lambda s, u, t: source)
+
+    v = _anchored(cfg, ev).verify(ev, recheck_source=True, probe_image_bytes=probe)
+    assert v.claim_reproduces is False
+    assert any("does not reproduce" in n for n in v.notes)
+
+
+def test_the_claim_check_is_skipped_rather_than_passed_without_a_probe(
+    cfg, evidence, monkeypatch
+):
+    """A check that did not run must not read as a pass."""
+    probe, source = _png(6), _png(7)
+    ev = _bundle(evidence, probe, source)
+    monkeypatch.setattr("sigil.search.http.fetch_image", lambda s, u, t: source)
+
+    v = _anchored(cfg, ev).verify(ev, recheck_source=True)
+    assert v.claim_reproduces is None
+    assert v.ok, "an unrequested check should not fail the verification either"
+
+
+def test_an_unreachable_source_leaves_the_claim_unchecked_not_passed(
+    cfg, evidence, monkeypatch
+):
+    probe, source = _png(8), _png(9)
+    ev = _bundle(evidence, probe, source)
+    monkeypatch.setattr("sigil.search.http.fetch_image", lambda s, u, t: None)
+
+    v = _anchored(cfg, ev).verify(ev, recheck_source=True, probe_image_bytes=probe)
+    assert v.source_image_intact is False
+    assert v.claim_reproduces is None
+    assert not v.ok
+
+
+def test_the_source_image_is_downloaded_once_for_both_checks(cfg, evidence,
+                                                             monkeypatch):
+    """Two checks wanting the same bytes must not mean two round trips."""
+    probe, source = _png(10), _png(11)
+    ev = _bundle(evidence, probe, source)
+    calls = []
+
+    def once(s, u, t):
+        calls.append(u)
+        return source
+
+    monkeypatch.setattr("sigil.search.http.fetch_image", once)
+    _anchored(cfg, ev).verify(ev, recheck_source=True, probe_image_bytes=probe)
+    assert len(calls) == 1, f"fetched {len(calls)} times"

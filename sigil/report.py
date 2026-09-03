@@ -163,6 +163,8 @@ def verification_panel(v, title: str = "Verification") -> None:
         t.add_row("probe re-encodes", OK if v.probe_matches else BAD)
     if v.source_image_intact is not None:
         t.add_row("source image intact", OK if v.source_image_intact else BAD)
+    if v.claim_reproduces is not None:
+        t.add_row("claim re-derives", OK if v.claim_reproduces else BAD)
     if v.on_chain:
         t.add_row("submitter", v.on_chain["submitter"])
         t.add_row("anchored at", str(v.on_chain["anchored_at"]))

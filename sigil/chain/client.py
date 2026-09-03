@@ -31,6 +31,7 @@ class Verification:
     subject_matches: bool = False
     probe_matches: bool | None = None
     source_image_intact: bool | None = None
+    claim_reproduces: bool | None = None
     notes: list[str] = field(default_factory=list)
 
     @property
@@ -41,7 +42,8 @@ class Verification:
         check that was not run must not be allowed to read as a pass.
         """
         core = self.anchored and self.similarity_matches and self.subject_matches
-        optional = [c for c in (self.probe_matches, self.source_image_intact) if c is not None]
+        optional = [c for c in (self.probe_matches, self.source_image_intact,
+                                self.claim_reproduces) if c is not None]
         return bool(core) and all(optional)
 
 
@@ -241,6 +243,7 @@ class ChainClient:
         evidence: Evidence,
         probe_embedding_sha256: str | None = None,
         recheck_source: bool = False,
+        probe_image_bytes: bytes | None = None,
     ) -> Verification:
         """Recompute the hash from local bytes and check it against chain state."""
         ehash = evidence.evidence_hash()
@@ -280,18 +283,17 @@ class ChainClient:
                 )
 
         if recheck_source:
-            v.source_image_intact = self._recheck_source(evidence, v)
+            blob = self._fetch_source(evidence, v)
+            v.source_image_intact = self._recheck_source(evidence, v, blob)
+            if blob is not None and probe_image_bytes is not None:
+                v.claim_reproduces = self._recheck_claim(
+                    evidence, v, probe_image_bytes, blob
+                )
 
         return v
 
-    def _recheck_source(self, evidence: Evidence, v: Verification) -> bool | None:
-        """Re-download the matched post image and confirm it is byte-identical.
-
-        The chain proves the bundle has not changed. This proves the *world* has
-        not changed underneath it - if the post was edited, its image swapped or
-        the account deleted, that shows up here rather than passing silently.
-        """
-        from ..evidence import sha256_hex
+    def _fetch_source(self, evidence: Evidence, v: Verification) -> bytes | None:
+        """Re-download the matched post image once, for every check that wants it."""
         from ..search.http import fetch_image, make_session
 
         blob = fetch_image(make_session(), evidence.match.image_url, 30.0)
@@ -300,6 +302,19 @@ class ChainClient:
                 "source image is no longer retrievable - the post may have been "
                 "deleted or made private since it was anchored"
             )
+        return blob
+
+    def _recheck_source(self, evidence: Evidence, v: Verification,
+                        blob: bytes | None) -> bool | None:
+        """Confirm the matched post image is still byte-identical.
+
+        The chain proves the bundle has not changed. This proves the *world* has
+        not changed underneath it - if the post was edited, its image swapped or
+        the account deleted, that shows up here rather than passing silently.
+        """
+        from ..evidence import sha256_hex
+
+        if blob is None:
             return False
         intact = sha256_hex(blob) == evidence.match.image_sha256
         if not intact:
@@ -307,6 +322,52 @@ class ChainClient:
                 "source image still exists but its bytes changed since anchoring"
             )
         return intact
+
+    # How far the recomputed picture similarity may drift from the recorded
+    # one. It should be exact - same bytes, same code - but the fingerprint
+    # goes through cv2's resize, and two OpenCV builds need not round a
+    # downscale identically. Wide enough to absorb that, far narrower than the
+    # gap between a republication and an independent photograph.
+    CLAIM_TOLERANCE = 0.01
+
+    def _recheck_claim(self, evidence: Evidence, v: Verification,
+                       probe_bytes: bytes, source_bytes: bytes) -> bool | None:
+        """Re-derive identity-vs-provenance from the two images, independently.
+
+        The hash already proves nobody edited ``claim`` after the fact. This
+        proves something the hash cannot: that the claim followed from the
+        images in the first place. A bundle asserting an identity claim - a
+        different photograph of the same face - while pointing at a
+        republication of the probe would be internally false rather than
+        merely altered, and only recomputing catches that.
+
+        It needs both the probe and the live source image, so it runs only
+        when ``--probe`` and ``--recheck-source`` are given together.
+        """
+        from ..face import decode_image
+        from ..provenance import claim_for, fingerprint, photo_similarity
+
+        probe_img = decode_image(probe_bytes)
+        source_img = decode_image(source_bytes)
+        if probe_img is None or source_img is None:
+            v.notes.append("could not decode one of the images to re-derive the claim")
+            return False
+
+        got = photo_similarity(fingerprint(probe_img), fingerprint(source_img))
+        recorded = evidence.match.probe_photo_similarity
+        if abs(got - recorded) > self.CLAIM_TOLERANCE:
+            v.notes.append(
+                f"picture similarity does not reproduce: bundle says "
+                f"{recorded:.4f}, these two images give {got:.4f}"
+            )
+            return False
+        if claim_for(got) != evidence.match.claim:
+            v.notes.append(
+                f"bundle claims '{evidence.match.claim}' but {got:.4f} makes it "
+                f"'{claim_for(got)}'"
+            )
+            return False
+        return True
 
     def total_anchored(self) -> int:
         self.ensure_deployed()

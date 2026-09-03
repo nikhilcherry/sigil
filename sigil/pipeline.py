@@ -280,6 +280,7 @@ def verification_payload(v) -> dict[str, Any]:
         "subject_matches": v.subject_matches,
         "probe_matches": v.probe_matches,
         "source_image_intact": v.source_image_intact,
+        "claim_reproduces": v.claim_reproduces,
         "on_chain": v.on_chain,
         "notes": v.notes,
         "ok": v.ok,
