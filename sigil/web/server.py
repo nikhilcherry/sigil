@@ -56,6 +56,10 @@ class Job:
 
 JOBS: dict[str, Job] = {}
 
+# Where the last uploaded probe was written. Re-verification needs the actual
+# image, not the bundle's description of it, and the browser only sends it once.
+LAST_PROBE: Path | None = None
+
 
 def _run_job(job: Job, probe_path: Path, query: str, opts: dict[str, Any]) -> None:
     # Everything is inside the try, including building the config. The browser
@@ -118,12 +122,47 @@ def _tamper(field: str) -> dict[str, Any]:
     }
 
 
+def _probe_for(evidence: Evidence) -> bytes | None:
+    """The bytes of the probe this bundle was built from, if they are still here.
+
+    Matched by digest rather than assumed. The last upload is not necessarily
+    the one behind the stored bundle - a second run that finds no match leaves
+    the previous bundle in place - and re-verifying one probe against another
+    bundle would fail for a reason that has nothing to do with either.
+    """
+    from ..evidence import sha256_hex
+
+    if LAST_PROBE is None or not LAST_PROBE.exists():
+        return None
+    blob = LAST_PROBE.read_bytes()
+    return blob if sha256_hex(blob) == evidence.probe.image_sha256 else None
+
+
 def _reverify() -> dict[str, Any]:
+    from ..config import Config as _Config
+    from ..pipeline import scan_probe
+
     ev = Evidence.from_dict(json.loads(EVIDENCE_PATH.read_text()))
-    client = ChainClient(Config())
+    cfg = _Config()
+    client = ChainClient(cfg)
+
+    # Re-encode the probe from its pixels. Passing ev.probe.embedding_sha256
+    # here - which is what this used to do - compares the bundle to itself, so
+    # the "probe re-encodes" row read PASS on every run while proving nothing.
+    probe_bytes = _probe_for(ev)
+    digest = None
+    if probe_bytes is not None:
+        try:
+            _, ref, _ = scan_probe(probe_bytes, cfg)
+            digest = ref.embedding_sha256
+        except PipelineError:
+            # The face that was found once is not found now: report that as a
+            # failed check rather than as no check at all.
+            digest = ""
+
     payload = verification_payload(
-        client.verify(ev, probe_embedding_sha256=ev.probe.embedding_sha256,
-                      recheck_source=True)
+        client.verify(ev, probe_embedding_sha256=digest, recheck_source=True,
+                      probe_image_bytes=probe_bytes)
     )
     payload["evidence"] = {"match": asdict(ev.match), "similarity": ev.similarity}
     return payload
@@ -219,6 +258,8 @@ class Handler(BaseHTTPRequestHandler):
         suffix = mimetypes.guess_extension(body.get("mime", "image/jpeg")) or ".jpg"
         probe_path = ARTIFACTS_DIR / f"probe{suffix}"
         probe_path.write_bytes(blob)
+        global LAST_PROBE
+        LAST_PROBE = probe_path
 
         job = Job()
         JOBS[job.id] = job

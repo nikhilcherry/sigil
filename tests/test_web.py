@@ -105,16 +105,75 @@ def test_tamper_changes_the_hash_and_breaks_verification(app, evidence, cfg):
     assert body["verification"]["ok"] is False
 
 
-def test_verify_endpoint_confirms_an_anchored_bundle(app, evidence, cfg):
+def test_verify_endpoint_confirms_an_anchored_bundle(app, evidence, cfg,
+                                                     monkeypatch):
     from sigil.chain import ChainClient
 
+    monkeypatch.setattr(web, "LAST_PROBE", None)
     ChainClient(cfg).anchor(evidence)
     web.EVIDENCE_PATH.write_bytes(evidence.canonical_json())
 
     status, body = post(app + "/api/verify")
     assert status == 200
     assert body["anchored"] is True
-    assert body["probe_matches"] is True
+    # With no probe image on disk the re-encode cannot be attempted, and an
+    # unrun check reads as not-run. This used to say True: the endpoint passed
+    # the bundle's own embedding digest back into the check that exists to
+    # test a photograph against it, so the row read PASS on every run while
+    # proving nothing at all.
+    assert body["probe_matches"] is None
+
+
+def _real_probe_evidence(match_ref):
+    """An evidence bundle whose ProbeRef really came from the committed image."""
+    from sigil.config import Config
+    from sigil.evidence import Evidence
+    from sigil.pipeline import scan_probe
+    from tests.conftest import EXAMPLE_PROBE
+
+    blob = EXAMPLE_PROBE.read_bytes()
+    _, ref, _ = scan_probe(blob, Config())
+    return blob, Evidence(probe=ref, match=match_ref, similarity=0.7596,
+                          threshold=0.38, searched_at="2026-09-03T00:00:00Z")
+
+
+def test_the_verify_endpoint_re_encodes_the_probe_rather_than_echoing_it(
+    app, cfg, match_ref, monkeypatch
+):
+    """The real thing: a probe on disk is scanned, not taken on the bundle's word."""
+    from sigil.chain import ChainClient
+    from tests.conftest import EXAMPLE_PROBE
+
+    blob, ev = _real_probe_evidence(match_ref)
+    ChainClient(cfg).anchor(ev)
+    web.EVIDENCE_PATH.write_bytes(ev.canonical_json())
+    monkeypatch.setattr(web, "LAST_PROBE", EXAMPLE_PROBE)
+
+    body = post(app + "/api/verify")[1]
+    assert body["probe_matches"] is True, body.get("notes")
+    assert blob  # the bundle really is built from those bytes
+
+
+def test_a_probe_from_a_different_run_is_not_used_to_verify_this_bundle(
+    app, cfg, evidence, monkeypatch
+):
+    """A run that finds nothing leaves the previous bundle in place.
+
+    Verifying that bundle against the newer upload would fail for a reason
+    having nothing to do with either of them, so the probe is matched by
+    digest and skipped when it does not belong.
+    """
+    from sigil.chain import ChainClient
+    from tests.conftest import EXAMPLE_PROBE
+
+    ChainClient(cfg).anchor(evidence)          # synthetic ProbeRef digests
+    web.EVIDENCE_PATH.write_bytes(evidence.canonical_json())
+    monkeypatch.setattr(web, "LAST_PROBE", EXAMPLE_PROBE)
+
+    body = post(app + "/api/verify")[1]
+    assert body["probe_matches"] is None
+    assert body["claim_reproduces"] is None
+
 
 
 def _read_stream(url, limit=10, deadline=90):
