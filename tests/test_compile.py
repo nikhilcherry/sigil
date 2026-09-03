@@ -106,3 +106,81 @@ def test_a_corrupt_artifact_recompiles_rather_than_crashing(wired, corrupt):
     assert solcx.compiles == 2
     assert out["bytecode"] == "0x6080"
     assert json.loads(artifact.read_text())["bytecode"] == "0x6080"
+
+
+# ------------------------------------------------- what keys the build cache
+
+
+def test_an_edit_that_preserves_the_timestamp_still_recompiles(monkeypatch,
+                                                               tmp_path):
+    """The cache used to key on mtime, which is not the content.
+
+    Two edits inside one filesystem tick, or a restore that preserves the
+    timestamp, leave an mtime unchanged while the source is different. A stale
+    hit here means deploying bytecode that does not correspond to the contract
+    in the repository - and this project's whole claim is that a reader can
+    check its records against the source. It is also the exact failure mode
+    Python's own mtime-keyed bytecode cache produced during this work.
+    """
+    import sigil.chain.compile as comp
+
+    source = tmp_path / "SigilRegistry.sol"
+    artifact = tmp_path / "SigilRegistry.json"
+    monkeypatch.setattr(comp, "SOURCE", source)
+    monkeypatch.setattr(comp, "ARTIFACT", artifact)
+    monkeypatch.setattr(comp, "ARTIFACTS_DIR", tmp_path)
+
+    calls = []
+
+    def fake_compile(files, **kw):
+        calls.append(source.read_bytes())
+        return {f"{source}:SigilRegistry": {"abi": [], "bin": "60" + str(len(calls))}}
+
+    monkeypatch.setattr(comp.solcx, "compile_files", fake_compile)
+    monkeypatch.setattr(comp, "_ensure_solc", lambda: None)
+
+    source.write_bytes(b"contract SigilRegistry { }")
+    first = comp.compile_registry()
+    assert len(calls) == 1
+
+    # Same content: a cache hit, no recompile.
+    assert comp.compile_registry() == first
+    assert len(calls) == 1
+
+    # Different content, timestamp forced back to what it was.
+    stat = source.stat()
+    source.write_bytes(b"contract SigilRegistry { uint256 x; }")
+    import os
+
+    os.utime(source, (stat.st_atime, stat.st_mtime))
+    assert source.stat().st_mtime == stat.st_mtime, "the mtime did not stay put"
+
+    second = comp.compile_registry()
+    assert len(calls) == 2, "a changed contract reused a stale artifact"
+    assert second["bytecode"] != first["bytecode"]
+
+
+def test_the_artifact_records_the_source_hash_it_was_built_from(monkeypatch,
+                                                               tmp_path):
+    """So a reader can tell which contract the cached bytecode belongs to."""
+    import hashlib
+    import json as _json
+
+    import sigil.chain.compile as comp
+
+    source = tmp_path / "SigilRegistry.sol"
+    artifact = tmp_path / "SigilRegistry.json"
+    monkeypatch.setattr(comp, "SOURCE", source)
+    monkeypatch.setattr(comp, "ARTIFACT", artifact)
+    monkeypatch.setattr(comp, "ARTIFACTS_DIR", tmp_path)
+    monkeypatch.setattr(comp, "_ensure_solc", lambda: None)
+    monkeypatch.setattr(comp.solcx, "compile_files", lambda files, **kw: {
+        f"{source}:SigilRegistry": {"abi": [], "bin": "6001"}})
+
+    body = b"contract SigilRegistry { }"
+    source.write_bytes(body)
+    comp.compile_registry()
+
+    written = _json.loads(artifact.read_text())
+    assert written["source_sha256"] == hashlib.sha256(body).hexdigest()
+    assert written["solc"] == comp.SOLC_VERSION
