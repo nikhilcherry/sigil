@@ -58,8 +58,23 @@ def test_full_pipeline_finds_and_anchors_a_real_match(cfg_live, tmp_path, monkey
             f"best similarity was {result.match.ranked[0].similarity if result.match.ranked else 0:.3f}"
         )
 
-    assert result.evidence.match.platform == "bluesky"
-    assert result.evidence.similarity >= result.evidence.threshold
+    ev = result.evidence
+    # Which arm wins is not fixed. Bluesky is the only unconditional one, but
+    # an open-web arm outranks it whenever its key is configured and the web
+    # holds a better photo of the same face. Pinning ``platform == "bluesky"``
+    # here passed in CI (no keys) and failed on any machine with a key set -
+    # a defect in the assertion, not in the run.
+    assert ev.match.platform, "match recorded no platform"
+    assert ev.match.post_url.startswith("https://"), ev.match.post_url
+    assert ev.match.discovered_via, "match does not say how it was found"
+    assert any(t["calls"] for t in ev.search_trace), "no arm recorded a live call"
+    assert any(t["provider"] == "bluesky" for t in ev.search_trace), (
+        "the keyless arm did not run"
+    )
+    assert ev.similarity >= ev.threshold
+    assert ev.similarity == result.match.ranked[0].similarity, (
+        "the anchored match is not the top-ranked one"
+    )
     assert result.anchor["already_anchored"] is False
     assert result.verification.ok
 
