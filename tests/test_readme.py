@@ -76,7 +76,7 @@ def test_the_readme_states_the_real_offline_test_count(pytestconfig):
     This deliberately does *not* skip without insightface. The count is the
     same in both installs, measured: every insightface gate in this suite is a
     runtime skip inside a test body, so those tests are collected either way -
-    497 with the extra and 497 without, the difference being 1 skip against 8,
+    506 with the extra and 506 without, the difference being 1 skip against 8,
     not 7 fewer tests. An earlier version importorskip'd here on the theory
     that collection varied, which made the one install that runs on every push
     - CI's ``.[dev]`` - the one install that never checked the number. If a

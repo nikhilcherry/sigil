@@ -11,7 +11,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from dataclasses import asdict, dataclass, field
+from dataclasses import MISSING, asdict, dataclass, field
+from dataclasses import fields as dataclass_fields
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -152,15 +153,83 @@ class Evidence:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Evidence:
+        """Build a bundle from parsed JSON, refusing anything it cannot account
+        for.
+
+        A bundle is the one input this tool is *designed* to receive from
+        somebody else - that is the entire point of anchoring a hash - so it is
+        hostile input in the ordinary case, not the exceptional one.
+
+        Unknown keys are rejected rather than ignored, and that is an integrity
+        fix rather than tidiness. Only the fields named here reach
+        `canonical_json`, so a key this loader does not know about was silently
+        dropped before the hash was computed: a file carrying an extra
+        top-level `"note": "..."` hashed identically to the bundle without it
+        and `sigil verify` called it VERIFIED. The chain attests the fields
+        below; if the file holds more than that, no honest answer about it
+        exists, so refuse instead of attesting a subset of the file a reader is
+        looking at.
+
+        Nested unknown keys did fail already, but as a raw
+        `TypeError: MatchRef.__init__() got an unexpected keyword argument`
+        out of a `**` expansion - a traceback, on a file handed to you by
+        someone else, for the ordinary case of a bundle from a newer version.
+        """
+        _require_mapping(d, "the bundle")
+        probe = _build(ProbeRef, d.get("probe"), "probe")
+        match = _build(MatchRef, d.get("match"), "match")
+
+        known = {"probe", "match", "similarity", "threshold", "searched_at",
+                 "search_trace", "schema"}
+        _reject_unknown(d, known, "the bundle")
+        missing = [k for k in ("similarity", "threshold", "searched_at") if k not in d]
+        if missing:
+            raise ValueError(
+                f"the bundle is missing {', '.join(sorted(missing))}"
+            )
+
         return cls(
-            probe=ProbeRef(**d["probe"]),
-            match=MatchRef(**d["match"]),
+            probe=probe,
+            match=match,
             similarity=d["similarity"],
             threshold=d["threshold"],
             searched_at=d["searched_at"],
             search_trace=d.get("search_trace", []),
             schema=d.get("schema", SCHEMA),
         )
+
+
+def _require_mapping(value: Any, where: str) -> None:
+    if not isinstance(value, dict):
+        kind = type(value).__name__
+        raise ValueError(f"{where} should be an object, not {kind}")
+
+
+def _reject_unknown(data: dict[str, Any], known: set[str], where: str) -> None:
+    unknown = sorted(set(data) - known)
+    if unknown:
+        raise ValueError(
+            f"{where} has {'a field' if len(unknown) == 1 else 'fields'} this "
+            f"version does not know: {', '.join(unknown)}. It was written by a "
+            "different version of sigil, and the hash covers only the fields "
+            "this one understands, so it cannot be verified here."
+        )
+
+
+def _build(cls: type, data: Any, where: str):
+    """Construct one nested record, saying what is wrong rather than raising
+    whatever `**` happens to raise."""
+    _require_mapping(data, where)
+    names = {f.name for f in dataclass_fields(cls)}
+    _reject_unknown(data, names, where)
+    required = {
+        f.name for f in dataclass_fields(cls)
+        if f.default is MISSING and f.default_factory is MISSING  # type: ignore[misc]
+    }
+    absent = sorted(required - set(data))
+    if absent:
+        raise ValueError(f"{where} is missing {', '.join(absent)}")
+    return cls(**data)
 
 
 def subject_ref(embedding_sha256: str, salt: str) -> bytes:

@@ -388,3 +388,83 @@ def test_the_written_bytes_are_the_hash_preimage(evidence, tmp_path):
     path = tmp_path / "evidence.json"
     evidence.write(path)
     assert "0x" + keccak(path.read_bytes()).hex() == evidence.evidence_hash_hex()
+
+
+# ------------------------------------ a bundle somebody else wrote
+
+
+def test_an_unknown_top_level_field_is_refused_rather_than_dropped(evidence):
+    """The integrity bug this loader exists to close.
+
+    `from_dict` used to read the keys it knew and ignore the rest, so a field
+    it did not recognise never reached `canonical_json` and never reached the
+    hash. A bundle carrying an extra top-level key therefore hashed *exactly*
+    the same as the bundle without it, and `sigil verify` reported VERIFIED
+    while the file in front of the reader held content the chain had never
+    seen. Asserting the hashes match is the point: it is what made silently
+    dropping the field a false attestation rather than a tidy one.
+    """
+    d = evidence.to_dict()
+    smuggled = {**d, "note": "this person is a criminal"}
+
+    # The old behaviour, reconstructed: drop what you do not know, and the
+    # digest is unchanged - which is precisely why it must not be the
+    # behaviour.
+    assert Evidence.from_dict(d).evidence_hash_hex() == evidence.evidence_hash_hex()
+
+    with pytest.raises(ValueError) as exc:
+        Evidence.from_dict(smuggled)
+    assert "note" in str(exc.value)
+
+
+def test_an_unknown_nested_field_is_refused_as_a_sentence(evidence):
+    """It failed before, but as a TypeError out of a `**` expansion."""
+    d = evidence.to_dict()
+    d["match"]["zzz_unknown"] = "x"
+    with pytest.raises(ValueError) as exc:
+        Evidence.from_dict(d)
+    assert "match" in str(exc.value) and "zzz_unknown" in str(exc.value)
+
+
+@pytest.mark.parametrize("value", [None, [1, 2, 3], "a string", 7])
+def test_a_nested_record_that_is_not_an_object_is_refused(evidence, value):
+    d = evidence.to_dict()
+    d["probe"] = value
+    with pytest.raises(ValueError) as exc:
+        Evidence.from_dict(d)
+    assert "probe" in str(exc.value)
+
+
+def test_a_missing_required_field_names_the_field(evidence):
+    d = evidence.to_dict()
+    del d["match"]["post_url"]
+    with pytest.raises(ValueError) as exc:
+        Evidence.from_dict(d)
+    assert "post_url" in str(exc.value)
+
+
+def test_a_missing_top_level_field_names_the_field(evidence):
+    d = evidence.to_dict()
+    del d["similarity"]
+    with pytest.raises(ValueError) as exc:
+        Evidence.from_dict(d)
+    assert "similarity" in str(exc.value)
+
+
+def test_a_bundle_missing_only_optional_fields_still_loads(evidence):
+    """Fields with defaults are how an older bundle reads at all.
+
+    Rejecting unknown fields must not turn into rejecting *absent* ones: a v1
+    bundle has none of the v2/v3 additions, and it has to load so that verify
+    can say its hash no longer matches rather than refusing to open it.
+    """
+    d = evidence.to_dict()
+    for optional in ("search_trace", "schema"):
+        d.pop(optional, None)
+    d["probe"].pop("provider", None)
+    for optional in ("probe_photo_similarity", "claim", "source_kind"):
+        d["match"].pop(optional, None)
+
+    loaded = Evidence.from_dict(d)
+    assert loaded.match.claim == "identity"
+    assert loaded.probe.provider == ""

@@ -55,7 +55,17 @@ def _cfg(**overrides) -> Config:
 def _load_evidence(path: Path) -> Evidence:
     if not path.exists():
         raise click.ClickException(f"evidence bundle not found: {path}")
-    return Evidence.from_dict(json.loads(path.read_text()))
+    # A bundle is the one input this tool exists to be handed by someone else,
+    # so a malformed one is ordinary rather than exceptional and gets a
+    # sentence instead of a traceback.
+    try:
+        data = json.loads(path.read_text())
+    except json.JSONDecodeError as exc:
+        raise click.ClickException(f"{path} is not valid JSON: {exc}") from exc
+    try:
+        return Evidence.from_dict(data)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
 def _write_evidence(evidence: Evidence, path: Path) -> None:
