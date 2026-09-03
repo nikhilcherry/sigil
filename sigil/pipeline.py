@@ -249,8 +249,21 @@ def run_pipeline(
     emit({"type": "stage", "stage": "anchor", "status": "done"})
 
     emit({"type": "stage", "stage": "verify", "status": "start"})
+    # A second, independent encode of the probe - not probe_ref's digest handed
+    # back to the check that exists to test a photograph against it. That is
+    # what this used to pass, and since `result.evidence.probe` *is* probe_ref
+    # it compared a value to itself: the run printed "probe re-encodes PASS"
+    # while establishing nothing.
+    #
+    # Re-encoding makes the row mean something real here, which is that the
+    # encoder is deterministic. Everything downstream assumes it: the subject
+    # commitment on chain is a hash of the embedding digest, so an encoder that
+    # answered differently on a second pass would silently stop verifying
+    # against its own probe. Measured deterministic on both backends, and one
+    # extra encode is about 1% of a run.
+    _, recheck, _ = scan_probe(image_bytes, cfg)
     result.verification = client.verify(
-        result.evidence, probe_embedding_sha256=probe_ref.embedding_sha256
+        result.evidence, probe_embedding_sha256=recheck.embedding_sha256
     )
     emit({"type": "verification", **verification_payload(result.verification)})
     emit({"type": "stage", "stage": "verify", "status": "done"})

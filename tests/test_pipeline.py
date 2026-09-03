@@ -148,3 +148,31 @@ def test_a_named_face_seeds_the_search_with_its_own_name(wired, cfg, monkeypatch
     assert provider.queries == ["A Known Person"]
     assert result.found
 
+
+
+def test_the_probe_is_encoded_a_second_time_to_verify_rather_than_echoed(
+    wired, cfg, monkeypatch
+):
+    """The row used to compare the bundle's own digest to itself.
+
+    ``result.evidence.probe`` *is* the ProbeRef the pipeline built, so handing
+    its digest to the check that exists to test a photograph against it made
+    "probe re-encodes" a tautology which passed on every run.
+    """
+    import sigil.pipeline as pipe
+
+    wired(["https://x/same.jpg"])
+    real_scan = pipe.scan_probe
+    seen = []
+
+    def counted(image_bytes, config):
+        out = real_scan(image_bytes, config)
+        seen.append(out[1].embedding_sha256)
+        return out
+
+    monkeypatch.setattr(pipe, "scan_probe", counted)
+    result = run_pipeline(str(EXAMPLE_PROBE), "who", cfg, do_anchor=True)
+
+    assert len(seen) == 2, f"the probe was encoded {len(seen)} time(s), not twice"
+    assert seen[0] == seen[1], "encoding one probe twice gave two different answers"
+    assert result.verification.probe_matches is True
