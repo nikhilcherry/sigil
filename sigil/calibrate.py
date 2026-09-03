@@ -69,6 +69,21 @@ PORTRAIT_LANGS = ("en", "es", "fr", "de", "ru", "ja", "pt", "it", "ar", "fa",
 HARVEST_WORKERS = 8
 BATCH = 40
 
+# A note on `--limit`, because the obvious instinct is to turn it up.
+#
+# Each sampled identity yields roughly nine portraits across fifteen
+# Wikipedias, so the download count is about `limit * 9` individual files from
+# Wikimedia. At 400 that is a few thousand and takes a bit under an hour on
+# CPU; at 1500 it is ~12,900 and the encoder stops being the constraint
+# entirely - even on a GPU it projected past two and a half hours, all of it
+# waiting on someone else's servers.
+#
+# 400 is where this settled, and not only for the runtime: the genuine sample
+# it produces (2,069 pairs from 323 people) already moved the headline figures
+# by a quarter of a point against a sample a sixth of the size, so a larger one
+# buys precision nobody needs at the cost of a sustained load on a free
+# service. Raise it if you have a reason; it is not free to anyone but you.
+
 # Above this, two "different" index identities are almost certainly the same
 # human twice - one duplicated Wikidata entity, or one painting illustrating
 # two historical figures. Reported separately rather than deleted, because
