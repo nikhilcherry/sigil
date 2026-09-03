@@ -146,6 +146,11 @@ class Calibration:
     # The identity index is a different question from the match threshold, and
     # a harder one. Defaulted so a calibration written before this existed
     # still loads rather than failing to parse.
+    # A hash of the index the impostor side was measured over. Only the count
+    # used to tie the two together, so rebuilding the index with a different
+    # 3,583 faces left every impostor statistic silently describing a set that
+    # no longer existed. Defaulted so a calibration written before this loads.
+    index_sha256: str = ""
     identify_threshold: float | None = None
     false_name_rate: float | None = None
     false_name_rate_excluding_artefacts: float | None = None
@@ -368,6 +373,17 @@ def genuine_similarities(
     return np.asarray(sims, dtype=np.float64), keys
 
 
+def index_digest(index: IdentityIndex) -> str:
+    """Content hash of the vectors a calibration was measured over.
+
+    The count alone cannot distinguish one index of 3,583 faces from another,
+    and the impostor rates describe a specific set of faces rather than a
+    number of them.
+    """
+    return sha256_hex(np.ascontiguousarray(
+        index.vectors.astype(np.float32)).tobytes())
+
+
 def impostor_similarities(index: IdentityIndex) -> tuple[np.ndarray, tuple]:
     """Every cross-identity pair in the index: different QIDs, different people."""
     m = _unit(index.vectors.astype(np.float32))
@@ -487,6 +503,7 @@ def measure(
         model=encoder.model,
         threshold=threshold,
         index_identities=len(index),
+        index_sha256=index_digest(index),
         sampled_requested=requested,
         sampled_photographic=len(by_qid),
         born_after=born_after,

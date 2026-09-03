@@ -164,6 +164,30 @@ def match_panel(evidence, scored=None) -> None:
     console.print(Panel(t, title="Match found", border_style="green", expand=False))
 
 
+def _current_calibration():
+    """The saved calibration, only if it still describes the index in place.
+
+    The impostor rates are counts over a specific set of faces. Rebuilding the
+    index changes that set, and the count alone cannot tell one index of 3,583
+    faces from another - so the calibration records a hash of the vectors it
+    measured, and a mismatch means the numbers are about something else. No
+    index at all means there is nothing to confirm against, which is the same
+    answer.
+    """
+    try:
+        from .calibrate import Calibration, index_digest
+        from .identify import IdentityIndex
+
+        cal = Calibration.load()
+        if not cal.index_sha256:
+            return None  # written before the hash existed; cannot be confirmed
+        if cal.index_sha256 != index_digest(IdentityIndex.load()):
+            return None
+        return cal
+    except Exception:  # noqa: BLE001 - absent, stale or unreadable is not an error
+        return None
+
+
 def _false_name_rate(threshold: float) -> float | None:
     """The measured chance of naming an unknown face, if it has been measured.
 
@@ -171,11 +195,8 @@ def _false_name_rate(threshold: float) -> float | None:
     the rate changes steeply with it, so quoting one for a different bar
     would be worse than quoting none.
     """
-    try:
-        from .calibrate import Calibration
-
-        cal = Calibration.load()
-    except Exception:  # noqa: BLE001 - absent or stale is not an error
+    cal = _current_calibration()
+    if cal is None:
         return None
     if cal.identify_threshold is None or abs(cal.identify_threshold - threshold) > 1e-9:
         return None
@@ -190,13 +211,8 @@ def _measured_rates(evidence):
     produced it happened to have run `sigil calibrate`, so two correct runs of
     the same match would disagree. It belongs to the reader, not the record.
     """
-    try:
-        from .calibrate import Calibration
-
-        cal = Calibration.load()
-    except Exception:  # noqa: BLE001 - an absent or stale calibration is not an error
-        return None
-    if cal.backend != evidence.probe.backend:
+    cal = _current_calibration()
+    if cal is None or cal.backend != evidence.probe.backend:
         return None
     return cal.rates_at(evidence.threshold)
 

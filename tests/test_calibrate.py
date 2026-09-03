@@ -429,13 +429,19 @@ def test_the_match_panel_shows_the_measured_rate_when_one_exists(tmp_path,
                                                                  monkeypatch,
                                                                  evidence):
     import sigil.calibrate as cal
+    from sigil.identify import IdentityIndex
     from sigil.report import console, match_panel
 
-    c = _measured()
+    by_qid, index = _population([0.9, 0.5], [0.1])
+    c = measure(FakeEncoder(), index, by_qid, threshold=evidence.threshold)
     c.backend = evidence.probe.backend
     saved = tmp_path / "calibration.json"
     c.save(saved)
     monkeypatch.setattr(cal, "CALIBRATION_PATH", saved)
+    # The rate is only quoted while the calibration still describes the index
+    # in place, so the test has to supply the index it was measured over.
+    monkeypatch.setattr(IdentityIndex, "load",
+                        classmethod(lambda cls, enc=None: index))
 
     with console.capture() as cap:
         match_panel(evidence)
@@ -582,6 +588,8 @@ def test_the_identity_table_quotes_the_rate_only_at_the_measured_threshold(
     saved = tmp_path / "calibration.json"
     c.save(saved)
     monkeypatch.setattr(cal, "CALIBRATION_PATH", saved)
+    monkeypatch.setattr(cal.IdentityIndex, "load",
+                        classmethod(lambda cls, enc=None: index))
 
     event = {"index_size": 2, "threshold": 0.45, "hits": []}
     with console.capture() as cap:
@@ -742,3 +750,130 @@ def test_a_lost_api_batch_costs_coverage_not_the_run():
             raise ValueError("Expecting value: line 1 column 1")
 
     assert _get_json(Broken(), "https://x", {}) == {}
+
+
+# ------------------------------------- a calibration belongs to an index
+
+
+def test_the_calibration_records_which_index_it_measured():
+    """The count cannot tell one index of 3,583 faces from another."""
+    from sigil.calibrate import index_digest
+
+    by_qid, index = _population([0.9, 0.5], [0.1])
+    c = measure(FakeEncoder(), index, by_qid, threshold=0.38)
+    assert c.index_sha256 == index_digest(index)
+    assert len(c.index_sha256) == 64
+
+
+def test_two_different_indexes_of_the_same_size_hash_differently():
+    """The whole point: the count is equal and the faces are not."""
+    from sigil.calibrate import index_digest
+
+    a = _index([[1, 0], [0, 1]])
+    b = _index([[1, 0], [0.6, 0.8]])
+    assert len(a) == len(b)
+    assert index_digest(a) != index_digest(b)
+
+
+def _saved_calibration(tmp_path, monkeypatch, index, identify_threshold=0.45):
+    import sigil.calibrate as cal
+
+    by_qid, _ = _population([0.9, 0.5], [])
+    c = measure(FakeEncoder(), index, by_qid, threshold=0.38,
+                identify_threshold=identify_threshold)
+    c.backend = "insightface"
+    saved = tmp_path / "calibration.json"
+    c.save(saved)
+    monkeypatch.setattr(cal, "CALIBRATION_PATH", saved)
+    return c
+
+
+def test_rates_are_not_quoted_once_the_index_has_been_rebuilt(tmp_path,
+                                                              monkeypatch,
+                                                              evidence):
+    """Rebuilding the index makes every impostor figure describe another set.
+
+    Nothing stopped the old numbers being printed under a new index, and they
+    would have looked exactly as authoritative.
+    """
+    import sigil.calibrate as cal
+    from sigil.identify import IdentityIndex
+    from sigil.report import console, match_panel
+
+    measured_over = _index([[1, 0], [0, 1], [1, 0]])
+    _saved_calibration(tmp_path, monkeypatch, measured_over)
+    evidence.probe.backend = "insightface"
+
+    # Same index: the rate is quoted.
+    monkeypatch.setattr(IdentityIndex, "load",
+                        classmethod(lambda c, enc=None: measured_over))
+    with console.capture() as cap:
+        match_panel(evidence)
+    assert "measured error rate" in cap.get()
+
+    # Rebuilt to the same size, different faces: it is not.
+    rebuilt = _index([[0, 1], [1, 0], [0.6, 0.8]])
+    assert len(rebuilt) == len(measured_over)
+    monkeypatch.setattr(IdentityIndex, "load",
+                        classmethod(lambda c, enc=None: rebuilt))
+    with console.capture() as cap:
+        match_panel(evidence)
+    assert "measured error rate" not in cap.get()
+    assert cal.CALIBRATION_PATH.exists(), "the file is still there; it just does not apply"
+
+
+def test_the_wrong_name_rate_is_not_quoted_under_a_rebuilt_index(tmp_path,
+                                                                 monkeypatch):
+    from sigil.identify import IdentityIndex
+    from sigil.report import console, identity_table
+
+    measured_over = _index([[1, 0], [0, 1], [1, 0]])
+    _saved_calibration(tmp_path, monkeypatch, measured_over)
+    event = {"index_size": 3, "threshold": 0.45, "hits": []}
+
+    monkeypatch.setattr(IdentityIndex, "load",
+                        classmethod(lambda c, enc=None: measured_over))
+    with console.capture() as cap:
+        identity_table(event, echo=True)
+    assert "named anyway" in cap.get()
+
+    monkeypatch.setattr(IdentityIndex, "load",
+                        classmethod(lambda c, enc=None: _index([[0, 1], [1, 0], [0, 1]])))
+    with console.capture() as cap:
+        identity_table(event, echo=True)
+    assert "named anyway" not in cap.get()
+
+
+def test_a_calibration_without_the_index_hash_is_not_quoted(tmp_path,
+                                                            monkeypatch,
+                                                            evidence):
+    """Written before the field existed, so it cannot be confirmed."""
+    import json as _json
+
+    import sigil.calibrate as cal
+    from sigil.report import console, match_panel
+
+    c = _saved_calibration(tmp_path, monkeypatch, _index([[1, 0], [0, 1]]))
+    data = _json.loads(cal.CALIBRATION_PATH.read_text())
+    data["index_sha256"] = ""
+    cal.CALIBRATION_PATH.write_text(_json.dumps(data))
+    evidence.probe.backend = c.backend
+
+    with console.capture() as cap:
+        match_panel(evidence)
+    assert "measured error rate" not in cap.get()
+
+
+def test_no_index_at_all_means_no_rate_to_confirm(tmp_path, monkeypatch,
+                                                  evidence):
+    import sigil.calibrate as cal
+    from sigil.report import console, match_panel
+
+    _saved_calibration(tmp_path, monkeypatch, _index([[1, 0], [0, 1]]))
+    monkeypatch.setattr(cal.IdentityIndex, "load",
+                        classmethod(lambda c, enc=None: (_ for _ in ()).throw(
+                            FileNotFoundError("no identity index yet"))))
+
+    with console.capture() as cap:
+        match_panel(evidence)
+    assert "measured error rate" not in cap.get()
