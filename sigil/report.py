@@ -54,17 +54,38 @@ def search_panel(result, threshold: float, providers: list[str]) -> None:
                 border_style="dim")
     tbl.add_column("#", justify="right", style="dim")
     tbl.add_column("similarity", justify="right")
+    tbl.add_column("claim")
     tbl.add_column("account")
     tbl.add_column("found via", style="dim")
-    for i, s in enumerate(result.ranked[:8], 1):
+    anchored = result.best.image_sha256 if result.best else None
+    # The anchored candidate is often not in the top few - that is the whole
+    # point of the preference - so it is pulled in rather than left off the
+    # only table the run prints.
+    shown = list(enumerate(result.ranked, 1))[:8]
+    if anchored and not any(s.image_sha256 == anchored for _, s in shown):
+        shown += [(i, s) for i, s in enumerate(result.ranked, 1)
+                  if s.image_sha256 == anchored][:1]
+    for i, s in shown:
         hit = s.similarity >= threshold
+        # "same photo" is the honest label for a reverse-image hit: the cosine
+        # is near 1.0 because it is the probe's own picture, not because the
+        # model made a hard call.
+        identity = s.claim == "identity"
         tbl.add_row(
-            str(i),
+            ("[bold]" + str(i) + " ◀[/bold]"
+             if anchored and s.image_sha256 == anchored else str(i)),
             Text(f"{s.similarity:.4f}", style="bold green" if hit else "yellow"),
+            Text("different photo" if identity else "same photo",
+                 style="green" if identity else "yellow"),
             s.candidate.author_handle or s.candidate.platform,
             s.candidate.discovered_via.replace("app.bsky.", ""),
         )
     console.print(tbl)
+    if anchored:
+        console.print("[dim]◀ anchored. A social post outranks an open-web "
+                      "page, and a different photograph of the same face "
+                      "outranks a higher cosine on the probe's own picture "
+                      "republished.[/dim]")
 
 
 def match_panel(evidence) -> None:
@@ -72,7 +93,7 @@ def match_panel(evidence) -> None:
     t = Table.grid(padding=(0, 2))
     t.add_column(style="dim", justify="right")
     t.add_column()
-    t.add_row("platform", m.platform)
+    t.add_row("platform", f"{m.platform} [dim]({m.source_kind})[/dim]")
     t.add_row("account", f"{m.author_display_name} [cyan]@{m.author_handle}[/cyan]")
     t.add_row("post", f"[link={m.post_url}]{m.post_url}[/link]")
     t.add_row("image", m.image_url[:96])
@@ -81,6 +102,14 @@ def match_panel(evidence) -> None:
         t.add_row("text", m.text[:160])
     t.add_row("similarity", f"[bold green]{evidence.similarity:.4f}[/bold green] "
                             f"[dim](threshold {evidence.threshold:.3f})[/dim]")
+    if m.claim == "identity":
+        t.add_row("claim", "[bold green]identity[/bold green] [dim]— a different "
+                           "photograph of the same face[/dim]")
+    else:
+        t.add_row("claim", "[bold yellow]provenance[/bold yellow] [dim]— the "
+                           "probe's own photograph, published here[/dim]")
+    t.add_row("picture vs probe", f"{m.probe_photo_similarity:.4f} "
+                                  f"[dim](whole image, no face model)[/dim]")
     t.add_row("evidence hash", evidence.evidence_hash_hex())
     console.print(Panel(t, title="Match found", border_style="green", expand=False))
 

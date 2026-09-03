@@ -21,6 +21,10 @@ class Candidate:
     text: str
     created_at: str
     discovered_via: str
+    # "social" for a post or profile on a named platform, "web" for a page the
+    # open-web arms found. The task asks for a social media post; an open-web
+    # page is corroboration, so the two are not interchangeable outputs.
+    source_kind: str = "web"
 
 
 @dataclass
@@ -43,6 +47,7 @@ class ProviderTrace:
 @runtime_checkable
 class SearchProvider(Protocol):
     name: str
+    kind: str
     trace: ProviderTrace
 
     def candidates(self, query: str) -> Iterator[Candidate]: ...

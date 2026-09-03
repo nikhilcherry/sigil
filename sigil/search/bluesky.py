@@ -36,6 +36,7 @@ def at_uri_to_web_url(uri: str, handle: str) -> str:
 
 class BlueskyProvider:
     name = "bluesky"
+    kind = "social"
 
     def __init__(self, cfg: Config) -> None:
         self.cfg = cfg
@@ -103,6 +104,7 @@ class BlueskyProvider:
         for url in self._images_from_post(post):
             yield Candidate(
                 platform="bluesky",
+                        source_kind="social",
                 image_url=url,
                 post_url=at_uri_to_web_url(post.get("uri", ""), handle),
                 post_uri=post.get("uri", ""),
@@ -150,6 +152,7 @@ class BlueskyProvider:
                 if actor.get("avatar"):
                     yield Candidate(
                         platform="bluesky",
+                        source_kind="social",
                         image_url=actor["avatar"],
                         post_url=f"https://bsky.app/profile/{handle}",
                         post_uri=f"at://{did}/app.bsky.actor.profile/self",

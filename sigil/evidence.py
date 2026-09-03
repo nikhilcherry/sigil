@@ -56,6 +56,13 @@ class MatchRef:
     image_sha256: str
     created_at: str
     discovered_via: str
+    # Whole-image similarity to the probe, and what that makes this match:
+    # "identity" for a different photograph of the same face, "provenance" for
+    # the probe's own photograph found somewhere else. See sigil/provenance.py.
+    probe_photo_similarity: float = 0.0
+    claim: str = "identity"
+    # "social" or "web" - which kind of arm found it. See sigil/search/base.py.
+    source_kind: str = "web"
 
 
 @dataclass
@@ -74,6 +81,11 @@ class Evidence:
         # re-run's floating-point noise cannot change the hash.
         d["similarity"] = round(float(self.similarity), 6)
         d["threshold"] = round(float(self.threshold), 6)
+        # Same reason as similarity: a float straight from a computation would
+        # let floating-point noise on a re-run change the anchored hash.
+        d["match"]["probe_photo_similarity"] = round(
+            float(self.match.probe_photo_similarity), 6
+        )
         return d
 
     def canonical_json(self) -> bytes:

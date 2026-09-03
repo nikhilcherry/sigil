@@ -135,7 +135,7 @@ def test_search_returns_no_match_when_nothing_clears_the_threshold(monkeypatch):
     import sigil.search.matcher as m
 
     monkeypatch.setattr(m, "fetch_image", lambda s, u, t: b"bytes-" + u.encode())
-    monkeypatch.setattr(m, "score_image", lambda e, p, b: (0.11, 1, [0, 0, 5, 5]))
+    monkeypatch.setattr(m, "score_image", lambda e, p, b, fp=None: (0.11, 1, [0, 0, 5, 5], 0.0))
 
     cfg = Config()
     provider = FakeProvider([_candidate("https://a"), _candidate("https://b")])
@@ -153,7 +153,7 @@ def test_search_picks_the_highest_scoring_candidate(monkeypatch):
     scores = {"https://a": 0.20, "https://b": 0.81, "https://c": 0.55}
     monkeypatch.setattr(m, "fetch_image", lambda s, u, t: u.encode())
     monkeypatch.setattr(
-        m, "score_image", lambda e, p, blob: (scores[blob.decode()], 1, [0, 0, 5, 5])
+        m, "score_image", lambda e, p, blob, fp=None: (scores[blob.decode()], 1, [0, 0, 5, 5], 0.0)
     )
 
     provider = FakeProvider([_candidate(u) for u in scores])
@@ -171,7 +171,7 @@ def test_undownloadable_images_are_skipped_not_fatal(monkeypatch):
     import sigil.search.matcher as m
 
     monkeypatch.setattr(m, "fetch_image", lambda s, u, t: None if "bad" in u else b"ok")
-    monkeypatch.setattr(m, "score_image", lambda e, p, b: (0.9, 1, [0, 0, 5, 5]))
+    monkeypatch.setattr(m, "score_image", lambda e, p, b, fp=None: (0.9, 1, [0, 0, 5, 5], 0.0))
 
     provider = FakeProvider([_candidate("https://bad"), _candidate("https://good")])
     result = search_and_match(
@@ -185,7 +185,7 @@ def test_max_images_caps_the_work(monkeypatch):
     import sigil.search.matcher as m
 
     monkeypatch.setattr(m, "fetch_image", lambda s, u, t: b"x")
-    monkeypatch.setattr(m, "score_image", lambda e, p, b: (0.1, 1, []))
+    monkeypatch.setattr(m, "score_image", lambda e, p, b, fp=None: (0.1, 1, [], 0.0))
 
     cfg = Config()
     cfg.max_images = 5
@@ -208,7 +208,7 @@ def test_a_second_arm_is_consulted_even_when_the_first_overflows_the_budget(
     import sigil.search.matcher as m
 
     monkeypatch.setattr(m, "fetch_image", lambda s, u, t: b"x")
-    monkeypatch.setattr(m, "score_image", lambda e, p, b: (0.1, 1, []))
+    monkeypatch.setattr(m, "score_image", lambda e, p, b, fp=None: (0.1, 1, [], 0.0))
 
     cfg = Config()
     cfg.max_images = 10
@@ -228,7 +228,7 @@ def test_the_trace_records_what_was_actually_queried(monkeypatch):
     import sigil.search.matcher as m
 
     monkeypatch.setattr(m, "fetch_image", lambda s, u, t: b"x")
-    monkeypatch.setattr(m, "score_image", lambda e, p, b: (0.9, 1, []))
+    monkeypatch.setattr(m, "score_image", lambda e, p, b, fp=None: (0.9, 1, [], 0.0))
 
     provider = FakeProvider([_candidate("https://a")])
     result = search_and_match(
@@ -250,9 +250,9 @@ def test_identical_bytes_reuse_the_score_without_dropping_the_post(monkeypatch):
 
     calls = []
 
-    def score(encoder, probe, blob):
+    def score(encoder, probe, blob, fp=None):
         calls.append(blob)
-        return 0.9, 1, [0, 0, 5, 5]
+        return 0.9, 1, [0, 0, 5, 5], 0.0
 
     monkeypatch.setattr(m, "fetch_image", lambda s, u, t: b"same-bytes")
     monkeypatch.setattr(m, "score_image", score)
@@ -291,11 +291,11 @@ def test_downloads_keep_running_while_the_encoder_works(monkeypatch):
         time.sleep(0.01)
         return url.encode()
 
-    def score(encoder, probe, blob):
+    def score(encoder, probe, blob, fp=None):
         scoring.set()
         time.sleep(0.02)
         scoring.clear()
-        return 0.1, 1, []
+        return 0.1, 1, [], 0.0
 
     monkeypatch.setattr(m, "fetch_image", fetch)
     monkeypatch.setattr(m, "score_image", score)
@@ -324,7 +324,7 @@ def test_prefetch_preserves_candidate_order(monkeypatch):
         return url.encode()
 
     monkeypatch.setattr(m, "fetch_image", fetch)
-    monkeypatch.setattr(m, "score_image", lambda e, p, b: (0.5, 1, []))
+    monkeypatch.setattr(m, "score_image", lambda e, p, b, fp=None: (0.5, 1, [], 0.0))
 
     cfg = Config()
     cfg.max_images = 40
@@ -656,7 +656,7 @@ def test_reused_verdicts_are_not_counted_as_faces_compared(monkeypatch):
     import sigil.search.matcher as m
 
     monkeypatch.setattr(m, "fetch_image", lambda s, u, t: b"same-bytes")
-    monkeypatch.setattr(m, "score_image", lambda e, p, b: (0.9, 2, [0, 0, 5, 5]))
+    monkeypatch.setattr(m, "score_image", lambda e, p, b, fp=None: (0.9, 2, [0, 0, 5, 5], 0.0))
 
     provider = FakeProvider([_candidate(f"https://cdn/a?w={i}") for i in range(4)])
     result = search_and_match(
@@ -679,10 +679,10 @@ def test_progress_counts_every_image_not_only_the_ones_with_faces(monkeypatch):
     import sigil.search.matcher as m
 
     # Only the middle image has a detectable face.
-    faces = {"https://b": (0.9, 1, [0, 0, 5, 5])}
+    faces = {"https://b": (0.9, 1, [0, 0, 5, 5], 0.0)}
     monkeypatch.setattr(m, "fetch_image", lambda s, u, t: u.encode())
     monkeypatch.setattr(m, "score_image",
-                        lambda e, p, blob: faces.get(blob.decode(), (-1.0, 0, [])))
+                        lambda e, p, blob, fp=None: faces.get(blob.decode(), (-1.0, 0, [], 0.0)))
 
     events = []
     provider = FakeProvider([_candidate(u) for u in

@@ -169,3 +169,31 @@ def test_identity_table_renders_with_no_hits(captured):
 def test_stage_headers_render(captured):
     report.stage(1, 5, "Face scan")
     assert "Face scan" in captured.export_text()
+
+
+def test_the_anchored_candidate_is_shown_even_when_it_is_outside_the_top_few():
+    """It usually is, since a social identity claim outranks a higher cosine."""
+    from sigil.report import console, search_panel
+    from sigil.search.base import Candidate
+    from sigil.search.matcher import MatchResult, ScoredCandidate
+
+    def scored(sim, handle, kind="web", photo=0.99):
+        return ScoredCandidate(
+            candidate=Candidate(
+                platform="p", image_url=f"https://{handle}",
+                post_url="https://p", post_uri="at://p", author_handle=handle,
+                author_did="", author_display_name=handle, text="",
+                created_at="", discovered_via="v", source_kind=kind),
+            similarity=sim, image_sha256=handle, faces_in_image=1,
+            matched_bbox=[0, 0, 1, 1], photo_similarity=photo)
+
+    ranked = [scored(0.99 - i / 1000, f"copy{i}") for i in range(12)]
+    winner = scored(0.7596, "aoc", kind="social", photo=0.02)
+    ranked.append(winner)
+    result = MatchResult(best=winner, ranked=ranked)
+
+    with console.capture() as cap:
+        search_panel(result, 0.38, ["bluesky", "google-vision-web"])
+    out = cap.get()
+    assert "aoc" in out, "the anchored candidate was not shown at all"
+    assert "◀" in out

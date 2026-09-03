@@ -30,6 +30,7 @@ outcome rather than a failure.
 | Face detection + encoding | RetinaFace + ArcFace `w600k_r50`, 512-d; OpenCV YuNet + SFace as a keyless fallback | [`sigil/face/`](sigil/face/) · [§1](#1--face-encoding) |
 | Face → name | local index harvested from Wikipedia pageviews → Wikidata `P31=Q5` → Commons portraits | [`sigil/identify.py`](sigil/identify.py) · [§2](#2--identification--turning-a-face-into-a-name) |
 | Live social search | anonymous AT Protocol (`searchActors`, `getAuthorFeed`); Google Cloud Vision web detection and Google Lens when configured | [`sigil/search/`](sigil/search/) · [§3](#3--web--social-search) |
+| Evidence weighting | whole-image fingerprint separates *this photo again* from *another photo of that face*; social sources outrank open-web ones | [`sigil/provenance.py`](sigil/provenance.py) · [§3](#3--web--social-search) |
 | Blockchain record | keccak256 over a canonical evidence bundle → append-only Solidity registry, on a persisted local py-evm chain or any EVM node | [`contracts/SigilRegistry.sol`](contracts/SigilRegistry.sol) · [§4](#4--blockchain-verification) |
 | Re-verification | recompute the hash and check it against chain state, not against a log | `sigil verify` · [below](#verifying-and-proving-that-verification-bites) |
 | Threshold calibration | 6.4 M real impostor pairs against genuine pairs harvested across language Wikipedias | [`sigil/calibrate.py`](sigil/calibrate.py) · [§5](#5--calibration--what-the-threshold-actually-costs) |
@@ -79,12 +80,17 @@ Stage 2/5 · Web / social search
   duplicate images    17  (score reused)
   live API calls      10
 
-  #   similarity   account                       found via
-  1       0.7596   aoc.bsky.social               actor.searchActors:avatar
-  2       0.6920   aoc.bsky.social               feed.getAuthorFeed
-  3       0.5660   africanprincess7.bsky.social  feed.getAuthorFeed
+  #   similarity   claim            account                  found via
+  1       0.9952   same photo       www.influencewatch.org   vision:pagesWithMatching
+  2       0.9935   same photo       aflcio.org               vision:pagesWithMatching
+  3       0.9892   different photo  images.squarespace-cdn   vision:fullMatchingImages
+  9 ◀     0.7596   different photo  aoc.bsky.social          actor.searchActors:avatar
 
-Stage 3/5 · Face match          0.7596  (threshold 0.380)
+  ◀ anchored. A social post outranks an open-web page, and a different
+    photograph of the same face outranks a higher cosine on the probe's own
+    picture republished.
+
+Stage 3/5 · Face match          0.7596  (threshold 0.380, identity claim)
 Stage 4/5 · Blockchain anchor   tx 0x9c202d06…  block 2  gas 114,222
 Stage 5/5 · Re-verification     VERIFIED
 ```
@@ -208,17 +214,48 @@ It proposes; it does not decide. Google says "this image appears on these
 pages", and every image it returns is downloaded and run through the same
 encoder as everything else before anything is called a match.
 
-**The two arms make different claims, and the similarity scores show it.**
-Measured on the committed probe: the Vision arm examined 47 images, every one
-of which contained a face, and topped out at **0.9952** — because reverse image
-search mostly returns *the same photograph* republished elsewhere, so the face
-in it is trivially the same face. The Bluesky arm scored **0.7596** on a
-*different* photograph, that account's own avatar. The lower number is the
-stronger identity claim: same person, two unrelated images. The higher one is
-closer to provenance — "this exact picture also appears here". Both are real
-matches and both are verified by the same encoder, but they should not be read
-as the same kind of evidence, and the `discovered_via` field in the bundle
-records which is which.
+**The two arms make different claims, the similarity scores show it, and the
+code acts on it.** Measured on the committed probe, the Vision arm tops out at
+**0.9952** — because reverse image search mostly returns *the same photograph*
+republished elsewhere, so the face in it is trivially the same face. The
+Bluesky arm scores **0.7596** on a *different* photograph, that account's own
+avatar. The lower number is the stronger identity claim: same person, two
+unrelated images. The higher one is closer to provenance — "this exact picture
+also appears here".
+
+Ranking by cosine alone therefore anchors the *weakest* evidence in the run and
+presents it as the strongest, which is what the pipeline used to do. So each
+candidate is classified before anything is chosen:
+
+- **Which photograph is it?** A 32×32 mean-centred greyscale fingerprint of the
+  whole image, correlated against the probe's — a signal the face model has no
+  part in, so it is not the model grading its own evidence. Over 170 real
+  candidates, all 55 exact republications scored ≥ 0.95 and every Bluesky
+  candidate scored below 0.67, including the true match at **0.0213**. Above
+  0.90 a candidate is the probe's own picture again: a *provenance* claim.
+  Below it, a different photograph: an *identity* claim. What it cannot split
+  is a **crop** from an independent photograph — an account reposting a cropped
+  probe scored 0.7915, a different person framed alike scored 0.6615, and a
+  cutoff placed between two points that close is a guess wearing a
+  measurement's clothes. So a crop is labelled conservatively as an identity
+  claim and the number itself goes into the bundle, where a reader can judge
+  it. See [`sigil/provenance.py`](sigil/provenance.py).
+- **Where was it found?** Providers declare themselves `social` or `web`,
+  because the deliverable is a social media post and an open-web page
+  corroborates it rather than replacing it.
+
+`pick_best` then prefers a social source, then an identity claim, and only then
+the higher cosine. The printed table stays ordered by raw similarity — hiding
+that would be the dishonest part — every row carries its own label, and the
+anchored row is marked. When everything that cleared the threshold is the
+probe's picture again, the best of those is still anchored, because a
+republication is a real finding; the bundle just records it as `provenance` so
+it cannot be read as the other thing.
+
+The evidence bundle carries `claim`, `probe_photo_similarity` and
+`source_kind` alongside `discovered_via`, so a reader can re-derive the
+decision instead of trusting it. That is what moved the schema to
+`sigil/evidence/v2`.
 
 **Google Lens via SerpAPI** is the older open-web arm, kept because it is a
 different index. It activates only when `SERPAPI_KEY` is set *and* the probe is
@@ -463,7 +500,7 @@ verifying against new probes — pick one and keep it).
 ## Tests
 
 ```bash
-pytest -m "not network"   # 292 offline tests, 93% line coverage
+pytest -m "not network"   # 318 offline tests, 93% line coverage
 pytest -m network         # 3 tests against the live API and a live chain
 ```
 

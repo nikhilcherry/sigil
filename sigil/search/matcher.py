@@ -14,10 +14,13 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
 
+import numpy as np
+
 from ..concurrency import prefetch
 from ..config import Config
 from ..evidence import sha256_hex
 from ..face import Face, cosine, decode_image
+from ..provenance import IDENTITY, claim_for, fingerprint, photo_similarity
 from .base import Candidate
 from .http import fetch_image, make_session
 
@@ -35,6 +38,14 @@ class ScoredCandidate:
     image_sha256: str
     faces_in_image: int
     matched_bbox: list[int]
+    # How close the whole picture is to the probe's, judged without the face
+    # model. See sigil/provenance.py.
+    photo_similarity: float = 0.0
+
+    @property
+    def claim(self) -> str:
+        """"identity" for a different photograph, "provenance" for this one again."""
+        return claim_for(self.photo_similarity)
 
 
 @dataclass
@@ -86,20 +97,29 @@ def interleave(streams: list[Iterator[Candidate]]) -> Iterator[Candidate]:
                 live.remove(stream)
 
 
-def score_image(encoder, probe: Face, image_bytes: bytes) -> tuple[float, int, list[int]]:
-    """Best similarity between the probe and any face in one image."""
+def score_image(
+    encoder, probe: Face, image_bytes: bytes,
+    probe_fingerprint: np.ndarray | None = None,
+) -> tuple[float, int, list[int], float]:
+    """Best face similarity in one image, plus how close the picture itself is.
+
+    Both come from one decode: the image is already in memory, and the whole-
+    image fingerprint costs microseconds next to the detector.
+    """
     img = decode_image(image_bytes)
     if img is None:
-        return -1.0, 0, []
+        return -1.0, 0, [], 0.0
+    photo = (photo_similarity(probe_fingerprint, fingerprint(img))
+             if probe_fingerprint is not None else 0.0)
     faces = encoder.detect_and_encode(img)
     if not faces:
-        return -1.0, 0, []
+        return -1.0, 0, [], photo
     best_sim, best_box = -1.0, []
     for f in faces:
         sim = cosine(probe.embedding, f.embedding)
         if sim > best_sim:
             best_sim, best_box = sim, f.bbox
-    return best_sim, len(faces), best_box
+    return best_sim, len(faces), best_box, photo
 
 
 def search_and_match(
@@ -110,14 +130,16 @@ def search_and_match(
     threshold: float,
     cfg: Config,
     on_event: Callable[[dict[str, Any]], None] | None = None,
+    probe_image: np.ndarray | None = None,
 ) -> MatchResult:
     session = make_session()
+    probe_fp = None if probe_image is None else fingerprint(probe_image)
     result = MatchResult(best=None)
     scored: list[ScoredCandidate] = []
-    # digest -> (similarity, faces_in_image, bbox). One image is routinely
-    # served under several URLs (CDN size variants, cache-busting query
-    # strings), and URL dedup cannot see that.
-    by_digest: dict[str, tuple[float, int, list[int]]] = {}
+    # digest -> (similarity, faces_in_image, bbox, photo_similarity). One image
+    # is routinely served under several URLs (CDN size variants, cache-busting
+    # query strings), and URL dedup cannot see that.
+    by_digest: dict[str, tuple[float, int, list[int], float]] = {}
 
     stream = _dedup(interleave([p.candidates(query) for p in providers]))
     stream = itertools.islice(stream, cfg.max_images)
@@ -156,10 +178,12 @@ def search_and_match(
             cached = by_digest.get(digest)
             if cached is not None:
                 result.inference_reused += 1
-                sim, n_faces, bbox = cached
+                sim, n_faces, bbox, photo = cached
             else:
-                sim, n_faces, bbox = score_image(encoder, probe, blob)
-                by_digest[digest] = (sim, n_faces, bbox)
+                sim, n_faces, bbox, photo = score_image(
+                    encoder, probe, blob, probe_fp
+                )
+                by_digest[digest] = (sim, n_faces, bbox, photo)
                 # Counted only where a comparison actually happened - the
                 # report calls this "faces compared", and a reused verdict
                 # compared nothing.
@@ -174,6 +198,7 @@ def search_and_match(
                         image_sha256=digest,
                         faces_in_image=n_faces,
                         matched_bbox=bbox,
+                        photo_similarity=photo,
                     )
                 )
                 if on_event:
@@ -187,6 +212,8 @@ def search_and_match(
                         "via": cand.discovered_via,
                         "faces": n_faces,
                         "hit": sim >= threshold,
+                        "photo_similarity": round(photo, 4),
+                        "claim": claim_for(photo),
                     })
             # Progress covers every image examined, including the ones with no
             # detectable face. Emitting it only for scored candidates left the
@@ -200,12 +227,46 @@ def search_and_match(
                     "top": round(max((s.similarity for s in scored), default=0.0), 4),
                 })
 
+    # The table stays ranked by raw face similarity, because that is what the
+    # model said and hiding it would be the dishonest part.
     scored.sort(key=lambda s: s.similarity, reverse=True)
     result.ranked = scored[:20]
-    if scored and scored[0].similarity >= threshold:
-        result.best = scored[0]
+    result.best = pick_best(scored, threshold)
 
     result.trace = [
         {"provider": p.name, "calls": p.trace.calls} for p in providers if hasattr(p, "trace")
     ]
     return result
+
+
+def pick_best(
+    scored: list[ScoredCandidate], threshold: float
+) -> ScoredCandidate | None:
+    """Choose what to anchor from the candidates that cleared the threshold.
+
+    Not simply the top of the table, for two reasons that both cut the same way.
+
+    First, what is being looked for is a *social media post*. An open-web page
+    that happens to carry the same face is corroboration, not the deliverable,
+    so a candidate from a social arm outranks one from an open-web arm.
+
+    Second, a reverse-image arm returns the probe's own photograph republished
+    elsewhere, which scores near 1.0 because it *is* the same picture. Ranking
+    by cosine alone therefore anchors the weakest evidence available and
+    presents it as the strongest; an independent photograph of the same face
+    scores lower and proves far more. So an identity claim outranks a
+    provenance claim, and cosine only decides between candidates alike on both
+    counts.
+
+    Nothing is hidden by this: the table stays ordered by raw similarity, every
+    candidate keeps its own label, and when everything that cleared is the
+    probe's picture again the best of those is still anchored - a republication
+    is a real finding - with the bundle recording it as a provenance claim so
+    it cannot be read as the other thing.
+    """
+    clearing = [s for s in scored if s.similarity >= threshold]
+    if not clearing:
+        return None
+    return max(clearing, key=lambda s: (s.candidate.source_kind == "social",
+                                        s.claim == IDENTITY,
+                                        s.similarity))

@@ -177,7 +177,8 @@ def run_pipeline(
     providers = build_providers(cfg, probe_url, image_bytes)
     emit({"type": "providers", "providers": [p.name for p in providers]})
     match = search_and_match(
-        encoder, face, providers, query, threshold, cfg, on_event=on_event
+        encoder, face, providers, query, threshold, cfg, on_event=on_event,
+        probe_image=decode_image(image_bytes),
     )
     emit({
         "type": "stage", "stage": "search", "status": "done",
@@ -219,6 +220,9 @@ def run_pipeline(
             image_sha256=best.image_sha256,
             created_at=c.created_at,
             discovered_via=c.discovered_via,
+            probe_photo_similarity=best.photo_similarity,
+            claim=best.claim,
+            source_kind=c.source_kind,
         ),
         similarity=best.similarity,
         threshold=threshold,

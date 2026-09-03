@@ -20,6 +20,7 @@ ENDPOINT = "https://serpapi.com/search.json"
 
 class SerpApiLensProvider:
     name = "serpapi-google-lens"
+    kind = "web"
 
     def __init__(self, cfg: Config, probe_url: str) -> None:
         self.cfg = cfg
@@ -56,6 +57,7 @@ class SerpApiLensProvider:
                 continue
             yield Candidate(
                 platform=(m.get("source") or urlparse(link).netloc or "web").lower(),
+                source_kind="web",
                 image_url=image_url,
                 post_url=link,
                 post_uri=link,

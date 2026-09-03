@@ -31,6 +31,7 @@ MAX_RESULTS = 50
 
 class GoogleVisionProvider:
     name = "google-vision-web"
+    kind = "web"
 
     def __init__(self, cfg: Config, probe_bytes: bytes) -> None:
         self.cfg = cfg
@@ -115,6 +116,7 @@ class GoogleVisionProvider:
         host = urlparse(page_url or image_url).netloc
         return Candidate(
             platform=(host or "web").lower(),
+            source_kind="web",
             image_url=image_url,
             post_url=page_url or image_url,
             post_uri=page_url or image_url,
