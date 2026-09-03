@@ -652,7 +652,11 @@ on yourself, on a consenting subject, or on a public figure for a demonstration.
 - **The local chain is a real EVM, not a real network.** py-evm executes the
   actual bytecode and persists state, but it is single-party: it proves
   integrity against your own record, not against a public consensus. Use
-  `SIGIL_CHAIN=rpc` for a record a third party can independently check.
+  `SIGIL_CHAIN=rpc` for a record a third party can independently check. It is
+  also not a datastore: the snapshot is rewritten whole on every anchor, at
+  about 9 KB per record beyond the first (measured, with anchor time flat at
+  ~23 ms out to 40 records), so it is sized for demonstrations rather than for
+  thousands of them.
 - **Bluesky's coverage is the practical ceiling on the keyless path.** It is a
   small, mostly Western platform, so a probe of someone without an account
   there finds nothing however good the face model is. That is coverage, not

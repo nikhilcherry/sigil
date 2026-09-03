@@ -6,6 +6,14 @@ fresh, empty chain. So the chain's underlying key/value store is snapshotted to
 disk after every write and rehydrated on load. The result behaves like a real
 node for our purposes: state is durable, history is append-only, and a record
 written by one process is genuinely read back from chain state by another.
+
+The snapshot is the whole store, rewritten on every anchor. Measured: 22 KB
+after the first record (mostly the contract's own bytecode) and about 9 KB per
+record after that, with anchor time flat at ~23 ms out to 40 records. That is
+comfortably right for demo volumes and plainly wrong for a datastore - at a
+few thousand records the O(n) rewrite would start to dominate. `SIGIL_CHAIN=rpc`
+is the answer to wanting one, and it is also the answer to wanting a record a
+third party can check.
 """
 
 from __future__ import annotations
