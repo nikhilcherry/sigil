@@ -65,6 +65,49 @@ provider, and on CPU otherwise. `sigil backends` reports which one actually
 answered — not which one was requested, since an unusable CUDA provider can
 warn and quietly serve CPU.
 
+<details>
+<summary><b>The GPU path, verified — 12.4× and three things that will bite you</b></summary>
+
+Measured on an RTX 5050 (Blackwell, driver 580) against the same 100 real
+candidate images:
+
+| | per image | 100 images | faces found |
+|---|---|---|---|
+| `CPUExecutionProvider` | 223 ms | 22.3 s | 86 |
+| `CUDAExecutionProvider` | **18 ms** | **1.8 s** | 86 |
+
+Identical detections, **12.4× faster**. That is the difference between a ~50 s
+run and a ~5 s one, and between an hour-long index build and about five
+minutes. No code change is involved — the automatic detection above simply
+finds the provider.
+
+Getting there took three steps that are not obvious:
+
+1. **Install `onnxruntime-gpu` *after* sigil, not before.** `onnxruntime` is a
+   hard dependency in `pyproject.toml`, so installing the package replaces the
+   GPU build with the CPU one. Doing it in the wrong order looks like success
+   and silently gives you CPU.
+2. **onnxruntime 1.29 wants CUDA 13 and cuDNN 9**, and the `nvidia-*-cu13`
+   names on PyPI are stubs that fail to build. The real wheels come from
+   NVIDIA's index: `uv pip install --extra-index-url https://pypi.nvidia.com
+   nvidia-cudnn-cu13 nvidia-cublas nvidia-curand nvidia-cufft
+   nvidia-cuda-runtime nvidia-nvjitlink`.
+3. **Put those wheels' `lib` directories on `LD_LIBRARY_PATH`**, or the
+   provider loads halfway and reports the first missing `.so` it hits.
+
+Each failure along the way looked exactly like the one this project already
+warns about: onnxruntime advertised `CUDAExecutionProvider` from the package
+build, failed to load it, and served CPU while `get_available_providers()`
+still listed it. That is precisely why `sigil backends` reads the provider back
+off the loaded session instead of reporting what was asked for.
+
+**Mixing providers is safe.** The same 40 images encoded on both give a
+cosine agreement of 0.9996 at worst and 0.99996 on average — float noise, two
+orders of magnitude below the 0.06 that merely rescaling an image costs. An
+index built on CPU can be queried with a GPU-encoded probe.
+
+</details>
+
 ### What a run looks like
 
 ```
