@@ -226,6 +226,22 @@ def build_index(
         identities = identities[:limit]
     say(f"encoding {len(identities)} portraits")
 
+    # Fetching Wikipedia's `original` lead images - often several thousand
+    # pixels - and handing them to a detector that immediately fits them into
+    # 640x640 looks like obvious waste. Measured over 26 real portraits against
+    # the API's own 640px thumbnails, it is not:
+    #
+    #   bytes      22.1 MB -> 5.6 MB      four times smaller
+    #   download     21.5s -> 20.7s       unchanged; this is latency, not bandwidth
+    #   encoding      8.1s -> 8.9s        unchanged; the detector normalises anyway
+    #   faces found  26/26 -> 26/26       no recall lost
+    #   embeddings   agreement 0.9886 mean, 0.9323 worst, 10 of 26 below 0.99
+    #
+    # So there is no time to win and a real cost to pay: the index would hold
+    # vectors measurably different from the ones a full-resolution probe
+    # produces, across a 0.45 threshold. The hour this build takes is inference,
+    # and inference does not care how many pixels arrived.
+
     vectors: list[np.ndarray] = []
     kept: list[Identity] = []
 

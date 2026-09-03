@@ -170,7 +170,15 @@ Measured on one laptop: 3,820 people harvested from the ten wikis in about four
 minutes, then roughly an hour to download and encode their portraits — 3,583
 usable faces, since a portrait with no detectable face is dropped. Encoding is
 effectively all of that hour, at about 0.8 s per portrait on CPU, so `--limit`
-is the knob that matters if you only want to see the path work. An interrupted
+is the knob that matters if you only want to see the path work.
+
+Fetching the API's 640px thumbnails instead of the full-resolution originals
+looks like the obvious fix and is not: measured over 26 portraits it cuts the
+bytes fourfold and changes neither the download time (latency, not bandwidth)
+nor the encode time (the detector normalises resolution anyway), while shifting
+the embeddings — 0.9886 mean agreement, 0.9323 at worst — against a 0.45
+threshold. The hour is inference, and inference does not care how many pixels
+arrived. An interrupted
 build keeps whatever it had already encoded and marks the index partial.
 
 Then a query becomes optional. Omit it and the face is named first, and the name
