@@ -144,6 +144,22 @@ class Calibration:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(self.to_dict(), indent=1))
 
+    def rates_at(self, threshold: float) -> tuple[float, float] | None:
+        """(tpr, fpr) at ``threshold``, from the nearest measured curve point.
+
+        Nearest rather than interpolated: these are counts over two finite
+        populations, and inventing a value between two of them would be
+        presenting arithmetic as measurement. Returns None outside the range
+        that was actually measured, rather than extrapolating.
+        """
+        if not self.curve:
+            return None
+        step = 0.01
+        nearest = min(self.curve, key=lambda c: abs(c["threshold"] - threshold))
+        if abs(nearest["threshold"] - threshold) > step:
+            return None
+        return nearest["tpr"], nearest["fpr"]
+
     @classmethod
     def load(cls, path: Path | None = None) -> Calibration:
         path = path or CALIBRATION_PATH

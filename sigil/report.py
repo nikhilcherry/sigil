@@ -111,7 +111,33 @@ def match_panel(evidence) -> None:
     t.add_row("picture vs probe", f"{m.probe_photo_similarity:.4f} "
                                   f"[dim](whole image, no face model)[/dim]")
     t.add_row("evidence hash", evidence.evidence_hash_hex())
+    rates = _measured_rates(evidence)
+    if rates:
+        tpr, fpr = rates
+        t.add_row("measured error rate",
+                  f"{_sci(fpr)} [dim]false accepts at this threshold, "
+                  f"catching {tpr * 100:.1f}% of true pairs — "
+                  f"`sigil calibrate --show`[/dim]")
     console.print(Panel(t, title="Match found", border_style="green", expand=False))
+
+
+def _measured_rates(evidence):
+    """The measured rates for this run's threshold, if a calibration exists.
+
+    Read from disk and shown rather than written into the bundle. Putting it in
+    the bundle would make the anchored hash depend on whether the machine that
+    produced it happened to have run `sigil calibrate`, so two correct runs of
+    the same match would disagree. It belongs to the reader, not the record.
+    """
+    try:
+        from .calibrate import Calibration
+
+        cal = Calibration.load()
+    except Exception:  # noqa: BLE001 - an absent or stale calibration is not an error
+        return None
+    if cal.backend != evidence.probe.backend:
+        return None
+    return cal.rates_at(evidence.threshold)
 
 
 def no_match_panel(result, threshold: float) -> None:

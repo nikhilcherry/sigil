@@ -389,3 +389,99 @@ def test_an_undecodable_portrait_is_skipped_not_fatal(monkeypatch):
     monkeypatch.setattr(cal, "fetch_image", lambda s, u, t: b"\x01")
     monkeypatch.setattr(cal, "decode_image", lambda blob: None)
     assert encode_portraits(StubEncoder({1: [1.0, 0.0]}), {"Q1": {"https://a"}}) == {}
+
+
+# ---------------------------------------------------- reading it back out
+
+
+def _measured(threshold=0.38):
+    by_qid, index = _population([0.9, 0.5], [0.1])
+    return measure(FakeEncoder(), index, by_qid, threshold=threshold)
+
+
+def test_rates_come_back_for_a_threshold_that_was_measured():
+    got = _measured().rates_at(0.40)
+    assert got is not None
+    tpr, fpr = got
+    assert 0.0 <= tpr <= 1.0 and 0.0 <= fpr <= 1.0
+
+
+def test_a_threshold_outside_the_measured_range_returns_nothing():
+    """Extrapolating past the data would present arithmetic as measurement."""
+    assert _measured().rates_at(0.99) is None
+    assert _measured().rates_at(-0.5) is None
+
+
+def test_rates_snap_to_the_nearest_measured_point_not_between_two():
+    c = _measured()
+    at_forty = c.rates_at(0.40)
+    assert c.rates_at(0.404) == at_forty
+    assert c.rates_at(0.396) == at_forty
+
+
+def test_a_calibration_with_no_curve_reports_nothing_rather_than_crashing():
+    c = _measured()
+    c.curve = []
+    assert c.rates_at(0.38) is None
+
+
+def test_the_match_panel_shows_the_measured_rate_when_one_exists(tmp_path,
+                                                                 monkeypatch,
+                                                                 evidence):
+    import sigil.calibrate as cal
+    from sigil.report import console, match_panel
+
+    c = _measured()
+    c.backend = evidence.probe.backend
+    saved = tmp_path / "calibration.json"
+    c.save(saved)
+    monkeypatch.setattr(cal, "CALIBRATION_PATH", saved)
+
+    with console.capture() as cap:
+        match_panel(evidence)
+    assert "measured error rate" in cap.get()
+
+
+def test_the_match_panel_is_silent_when_no_calibration_has_been_run(tmp_path,
+                                                                    monkeypatch,
+                                                                    evidence):
+    import sigil.calibrate as cal
+    from sigil.report import console, match_panel
+
+    monkeypatch.setattr(cal, "CALIBRATION_PATH", tmp_path / "absent.json")
+    with console.capture() as cap:
+        match_panel(evidence)
+    assert "measured error rate" not in cap.get()
+
+
+def test_a_calibration_from_a_different_backend_is_not_reported(tmp_path,
+                                                                monkeypatch,
+                                                                evidence):
+    """Two recognisers put similarity on different scales; the rate would lie."""
+    import sigil.calibrate as cal
+    from sigil.report import console, match_panel
+
+    c = _measured()
+    c.backend = "some-other-model"
+    saved = tmp_path / "calibration.json"
+    c.save(saved)
+    monkeypatch.setattr(cal, "CALIBRATION_PATH", saved)
+
+    with console.capture() as cap:
+        match_panel(evidence)
+    assert "measured error rate" not in cap.get()
+
+
+def test_a_corrupt_calibration_does_not_take_the_match_panel_down(tmp_path,
+                                                                  monkeypatch,
+                                                                  evidence):
+    import sigil.calibrate as cal
+    from sigil.report import console, match_panel
+
+    saved = tmp_path / "calibration.json"
+    saved.write_text("{ not json")
+    monkeypatch.setattr(cal, "CALIBRATION_PATH", saved)
+
+    with console.capture() as cap:
+        match_panel(evidence)
+    assert "Match found" in cap.get()

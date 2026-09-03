@@ -378,6 +378,24 @@ So 0.38 is well to the strict side of the equal-error point: it gives up recall
 to buy a much lower false-accept rate, which is the right way round for a tool
 that puts a name to a stranger.
 
+Once measured, the number stops being a side report: every subsequent match
+prints the error rate of the threshold it cleared.
+
+```
+  similarity           0.7596  (threshold 0.380)
+  claim                identity — a different photograph of the same face
+  measured error rate  2.836e-05 (1 in 35,259) false accepts at this threshold,
+                       catching 94.7% of true pairs
+```
+
+It is read from `models/calibration.json` and shown, deliberately **not**
+written into the evidence bundle. Putting it there would make the anchored hash
+depend on whether the machine that produced it happened to have run `sigil
+calibrate`, so two correct runs of the same match would disagree. The rate
+belongs to the reader, not to the record. A calibration from a different
+backend is ignored rather than reported, since two recognisers put similarity
+on different scales.
+
 **Three findings worth more than the headline numbers.**
 
 *The impostor tail is bad data, not a bad model.* The closest "different
