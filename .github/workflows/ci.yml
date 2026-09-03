@@ -49,13 +49,16 @@ jobs:
         run: ruff check .
 
       - name: Test
-        # --cov-fail-under enforces the figure the README prints. Measured at
-        # 93.29%, so the gate is set at the whole number below it: a claim
-        # nothing checks is the same shape of problem as a threshold nothing
-        # measures, which is most of what this project is about.
+        # A claim nothing checks is the same shape of problem as a threshold
+        # nothing measures, which is most of what this project is about - so
+        # the coverage figure is a gate rather than a sentence in the README.
+        #
+        # 92, not the 93 the README quotes, and the gap is this job's own
+        # install: without the insightface extra, that backend is never loaded
+        # and never covered. Measured 92.46% here against 93.29% with it.
         run: >
           pytest -m "not network" -q
-          --cov=sigil --cov-report=term-missing --cov-fail-under=93
+          --cov=sigil --cov-report=term-missing --cov-fail-under=92
 
   live:
     # Third-party APIs are the realistic breakage here, so they are checked on a

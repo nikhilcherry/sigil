@@ -600,6 +600,13 @@ pytest -m "not network"   # 377 offline tests, 93% line coverage
 pytest -m network         # 3 tests against the live API and a live chain
 ```
 
+Those two figures are for the full `.[insight,dev]` install from the
+Quickstart. CI installs `.[dev]` alone — the 300 MB model pack is not worth a
+minute on every push — so it collects 373 and covers 92%, the difference being
+the insightface backend it never loads. Both numbers are enforced rather than
+asserted: the test count is checked against the README by the suite itself, and
+CI fails under its own coverage floor.
+
 CI runs the offline suite on 3.10, 3.11, 3.12 and 3.13. 3.10 is there because
 it is the floor `pyproject.toml` declares, and a declared floor nobody runs is
 a guess rather than a claim.

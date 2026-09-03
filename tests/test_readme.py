@@ -68,11 +68,19 @@ def test_the_readme_covers_what_the_task_requires():
 def test_the_readme_states_the_real_offline_test_count(pytestconfig):
     """A stale count in a graded deliverable is a false claim, not a typo.
 
-    Only meaningful on a full run: collecting one file would compare the
-    README against that file's count, so a partial run skips instead.
+    Two things make a count meaningless to compare, and both skip rather than
+    fail. A partial collection knows only its own files. And the count depends
+    on which optional extras are installed - without insightface, four of its
+    tests are never collected - so this checks the figure against the install
+    the README quotes it for, which is the Quickstart's ``.[insight,dev]``.
+    CI installs ``.[dev]`` alone and legitimately collects fewer.
     """
     if getattr(pytestconfig, "collected_modules", 0) < 10:
         pytest.skip("partial collection - only the full suite knows the count")
+    pytest.importorskip(
+        "insightface",
+        reason="the README's count is for the full .[insight,dev] install",
+    )
 
     stated = re.search(r"#\s*(\d+)\s+offline tests", README.read_text())
     assert stated, "the README no longer states an offline test count"
