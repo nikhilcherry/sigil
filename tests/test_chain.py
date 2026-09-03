@@ -460,3 +460,26 @@ def test_the_source_image_is_downloaded_once_for_both_checks(cfg, evidence,
     monkeypatch.setattr("sigil.search.http.fetch_image", once)
     _anchored(cfg, ev).verify(ev, recheck_source=True, probe_image_bytes=probe)
     assert len(calls) == 1, f"fetched {len(calls)} times"
+
+
+def test_an_older_schema_is_explained_rather_than_blamed_on_tampering(cfg,
+                                                                      evidence):
+    """The bundle is intact; this build simply records more than it used to.
+
+    A v2 build re-serialises a v1 bundle with the fields v1 never had, so the
+    recomputed hash cannot match what was anchored. Without saying so, the
+    failure reads as an accusation.
+    """
+    _anchored(cfg, evidence)
+    stale = Evidence.from_dict({**evidence.to_dict(), "schema": "sigil/evidence/v1"})
+
+    v = ChainClient(cfg).verify(stale)
+    assert not v.anchored
+    assert any("sigil/evidence/v1" in n and "schema" in n for n in v.notes), v.notes
+    assert any("Re-run the pipeline" in n for n in v.notes)
+
+
+def test_a_current_schema_says_nothing_about_schemas(cfg, evidence):
+    v = _anchored(cfg, evidence).verify(evidence)
+    assert v.ok
+    assert not any("schema" in n for n in v.notes)

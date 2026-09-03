@@ -14,6 +14,7 @@ from typing import Any
 from web3 import Web3
 from web3.exceptions import ContractLogicError
 
+from .. import SCHEMA
 from ..config import STATE_PATH, Config
 from ..evidence import Evidence, subject_ref
 from .compile import compile_registry
@@ -248,6 +249,20 @@ class ChainClient:
         """Recompute the hash from local bytes and check it against chain state."""
         ehash = evidence.evidence_hash()
         v = Verification(evidence_hash="0x" + ehash.hex(), anchored=False)
+
+        # A bundle from an older schema re-serialises with the fields that
+        # schema did not have, so the hash recomputed here cannot match the one
+        # anchored then. Without this note the failure below reads as "the
+        # bundle has been modified", which would be an accusation rather than
+        # an explanation - the bundle is intact and this build is newer.
+        if evidence.schema != SCHEMA:
+            v.notes.append(
+                f"this bundle declares schema {evidence.schema}, this build writes "
+                f"{SCHEMA}. The newer schema records fields the older one did not, "
+                "so the hash cannot match what was anchored under the old one. "
+                "Re-run the pipeline to produce a current bundle; the old record "
+                "on chain is still valid for the old bundle."
+            )
 
         record = self.lookup(ehash)
         if record is None:
