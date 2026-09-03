@@ -374,3 +374,28 @@ def test_calibrate_passes_the_era_filter_through_and_zero_disables_it(monkeypatc
     seen.clear()
     CliRunner().invoke(cli, ["calibrate"])
     assert seen["born_after"] == cal.BORN_AFTER
+
+
+def test_a_mistyped_tamper_field_is_an_error_message_not_a_traceback(evidence,
+                                                                     tmp_path):
+    """`sigil tamper` is typed by hand during a demo; a typo used to dump a stack."""
+    path = tmp_path / "evidence.json"
+    path.write_bytes(evidence.canonical_json())
+
+    result = CliRunner().invoke(cli, ["tamper", "-e", str(path),
+                                      "--field", "match.nope"])
+    assert result.exit_code != 0
+    assert "Traceback" not in result.output
+    assert "no field 'match.nope'" in result.output
+    assert "match.text" in result.output, "the message should name real fields"
+
+
+def test_a_tamper_field_that_is_a_list_asks_for_a_value(evidence, tmp_path):
+    path = tmp_path / "evidence.json"
+    path.write_bytes(evidence.canonical_json())
+
+    result = CliRunner().invoke(cli, ["tamper", "-e", str(path),
+                                      "--field", "probe.bbox"])
+    assert result.exit_code != 0
+    assert "Traceback" not in result.output
+    assert "pass --value" in result.output

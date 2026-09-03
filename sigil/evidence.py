@@ -134,3 +134,58 @@ def subject_ref(embedding_sha256: str, salt: str) -> bytes:
     commitment from the bundle alone.
     """
     return keccak(SUBJECT_DOMAIN + salt.encode("utf-8") + bytes.fromhex(embedding_sha256))
+
+
+def field_paths(data: dict[str, Any], prefix: str = "") -> list[str]:
+    """Every dotted leaf path in a bundle dict, for error messages and help."""
+    out: list[str] = []
+    for key, value in data.items():
+        path = f"{prefix}{key}"
+        if isinstance(value, dict):
+            out.extend(field_paths(value, f"{path}."))
+        else:
+            out.append(path)
+    return out
+
+
+def alter_field(data: dict[str, Any], field: str, value: Any = None) -> tuple[Any, Any]:
+    """Change one field of a bundle dict in place. Returns (before, after).
+
+    This is the tamper demo's one job, and it is driven by a string the user
+    typed - a CLI flag, or a JSON body from the browser. A mistyped path used
+    to surface as a raw KeyError traceback, and a path landing on a list gave
+    a TypeError from trying to add 0.0001 to it. Both are ordinary user error
+    on a command whose whole purpose is to be run by hand during a demo, so
+    they are refused with a message that says what the field names actually
+    are.
+    """
+    parts = field.split(".")
+    node: Any = data
+    for depth, key in enumerate(parts[:-1]):
+        if not isinstance(node, dict) or key not in node:
+            raise ValueError(_no_such_field(data, ".".join(parts[: depth + 1])))
+        node = node[key]
+
+    leaf = parts[-1]
+    if not isinstance(node, dict) or leaf not in node:
+        raise ValueError(_no_such_field(data, field))
+
+    before = node[leaf]
+    if value is not None:
+        after: Any = value
+    elif isinstance(before, str):
+        after = before + "!"
+    elif isinstance(before, (int, float)) and not isinstance(before, bool):
+        after = before + 0.0001
+    else:
+        raise ValueError(
+            f"{field} holds a {type(before).__name__}, which has no obvious "
+            f"small edit - pass --value to set one explicitly"
+        )
+    node[leaf] = after
+    return before, after
+
+
+def _no_such_field(data: dict[str, Any], field: str) -> str:
+    return (f"no field {field!r} in this bundle. Available: "
+            + ", ".join(sorted(field_paths(data))))

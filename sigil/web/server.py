@@ -26,7 +26,7 @@ from typing import Any
 
 from ..chain import ChainClient
 from ..config import ARTIFACTS_DIR, Config, ensure_dirs
-from ..evidence import Evidence
+from ..evidence import Evidence, alter_field
 from ..pipeline import PipelineError, run_pipeline, verification_payload
 
 HERE = Path(__file__).parent
@@ -99,15 +99,7 @@ def _tamper(field: str) -> dict[str, Any]:
 
     original = Evidence.from_dict(json.loads(EVIDENCE_PATH.read_text()))
     data = json.loads(original.canonical_json())
-
-    node = data
-    parts = field.split(".")
-    for key in parts[:-1]:
-        node = node[key]
-    before = node[parts[-1]]
-    after = f"{before}!" if isinstance(before, str) else before + 0.0001
-    node[parts[-1]] = after
-
+    before, after = alter_field(data, field)
     tampered = Evidence.from_dict(data)
     TAMPERED_PATH.write_bytes(tampered.canonical_json())
 

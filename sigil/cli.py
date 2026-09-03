@@ -18,7 +18,7 @@ from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
 from . import __version__, report
 from .chain import ChainClient
 from .config import ARTIFACTS_DIR, Config, ensure_dirs
-from .evidence import Evidence
+from .evidence import Evidence, alter_field
 from .face import load_encoder
 from .pipeline import PipelineError, load_probe_bytes, run_pipeline, scan_probe
 from .report import console
@@ -250,22 +250,17 @@ def verify(evidence_path, chain_backend, probe, recheck_source):
               default=ARTIFACTS_DIR / "evidence.tampered.json", show_default=True)
 def tamper(evidence_path, field, value, out):
     """Produce an altered copy of a bundle, to demonstrate that verification fails."""
-    data = json.loads(_load_evidence(evidence_path).canonical_json())
-    node, *rest = field.split(".")
-    target = data
-    path = [node, *rest]
-    for key in path[:-1]:
-        target = target[key]
-    leaf = path[-1]
-    before = target[leaf]
-    target[leaf] = value if value is not None else (
-        f"{before}!" if isinstance(before, str) else before + 0.0001
-    )
+    original = _load_evidence(evidence_path)
+    data = json.loads(original.canonical_json())
+    try:
+        before, after = alter_field(data, field, value)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
 
     ev = Evidence.from_dict(data)
     _write_evidence(ev, out)
     console.print(
-        f"[yellow]{field}[/yellow]: {before!r} -> {target[leaf]!r}\n"
+        f"[yellow]{field}[/yellow]: {before!r} -> {after!r}\n"
         f"original hash : {_load_evidence(evidence_path).evidence_hash_hex()}\n"
         f"tampered hash : {ev.evidence_hash_hex()}\n"
         f"[dim]written to {out} - now run:[/dim] sigil verify -e {out}"
