@@ -92,8 +92,22 @@ Getting there took three steps that are not obvious:
    NVIDIA's index: `uv pip install --extra-index-url https://pypi.nvidia.com
    nvidia-cudnn-cu13 nvidia-cublas nvidia-curand nvidia-cufft
    nvidia-cuda-runtime nvidia-nvjitlink`.
-3. **Put those wheels' `lib` directories on `LD_LIBRARY_PATH`**, or the
-   provider loads halfway and reports the first missing `.so` it hits.
+3. **Make those wheels' libraries findable.** The provider is `dlopen`ed and
+   links CUDA and cuDNN by soname, and the wheels put them in directories the
+   linker does not search, so otherwise it loads halfway and reports the first
+   missing `.so` it hits. `LD_LIBRARY_PATH` works but has to be set before the
+   interpreter starts, for every invocation, including the ones inside
+   `scripts/demo.sh`. The tidier fix is a one-line `.pth` in the venv's
+   `site-packages` that imports a module preloading them with `RTLD_GLOBAL`:
+
+   ```
+   # zzz-sigil-cuda-preload.pth
+   import sigil_cuda_preload
+   ```
+
+   A `.pth` rather than the more obvious `sitecustomize.py`, because a conda
+   base interpreter ships its own `sitecustomize.py` earlier on `sys.path` and
+   wins — which costs an afternoon if you do not know it.
 
 Each failure along the way looked exactly like the one this project already
 warns about: onnxruntime advertised `CUDAExecutionProvider` from the package
@@ -101,10 +115,17 @@ build, failed to load it, and served CPU while `get_available_providers()`
 still listed it. That is precisely why `sigil backends` reads the provider back
 off the loaded session instead of reporting what was asked for.
 
-**Mixing providers is safe.** The same 40 images encoded on both give a
-cosine agreement of 0.9996 at worst and 0.99996 on average — float noise, two
-orders of magnitude below the 0.06 that merely rescaling an image costs. An
-index built on CPU can be queried with a GPU-encoded probe.
+**Mixing providers is safe**, which is what makes the hour-long index build
+portable. The same 40 images encoded on both give a cosine agreement of 0.9996
+at worst and 0.99996 on average — float noise, two orders of magnitude below
+the 0.06 that merely rescaling an image costs. End to end: the committed probe
+against the same CPU-built index names itself at 0.9720/0.2105 on CPU and
+0.9722/0.2107 on CUDA.
+
+None of this is committed. `pyproject.toml` depends on plain `onnxruntime`,
+CI and a clean clone run on CPU, and the venv is gitignored — so the numbers
+this README quotes elsewhere are the CPU ones, and `sigil backends` is how you
+tell which you actually have.
 
 </details>
 
