@@ -487,3 +487,41 @@ def test_index_info_reports_what_the_index_holds(monkeypatch, tmp_path):
     assert result.exit_code == 0, result.output
     assert "2" in result.output
     assert "insightface" in result.output
+
+
+# --------------------------------------------------------------- serve
+
+
+def test_serve_binds_to_localhost_by_default(monkeypatch):
+    """A safety default, and the last documented command with no test.
+
+    This tool searches for people by face and has no authentication. The
+    README promises it does not listen off-box unless asked; that promise is
+    one default argument deep, so it gets an assertion rather than trust.
+    """
+    import sigil.web as web
+
+    seen = {}
+    monkeypatch.setattr(web, "serve", lambda **kw: seen.update(kw))
+
+    result = CliRunner().invoke(cli, ["serve", "--no-browser"])
+    assert result.exit_code == 0, result.output
+    assert seen["host"] == "127.0.0.1"
+    assert seen["port"] == 8099
+    assert seen["open_browser"] is False
+
+
+def test_serve_passes_an_explicit_bind_through(monkeypatch):
+    """Reachable from off-box is available, but only by asking for it."""
+    import sigil.web as web
+
+    seen = {}
+    monkeypatch.setattr(web, "serve", lambda **kw: seen.update(kw))
+
+    result = CliRunner().invoke(
+        cli, ["serve", "--host", "0.0.0.0", "--port", "9000"]  # noqa: S104
+    )
+    assert result.exit_code == 0, result.output
+    assert seen["host"] == "0.0.0.0"  # noqa: S104
+    assert seen["port"] == 9000
+    assert seen["open_browser"] is True
