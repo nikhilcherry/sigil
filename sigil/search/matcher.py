@@ -72,8 +72,11 @@ def _dedup(it: Iterable[Candidate]) -> Iterator[Candidate]:
         yield c
 
 
-def interleave(streams: list[Iterator[Candidate]]) -> Iterator[Candidate]:
-    """Merge candidate streams round-robin, dropping each as it runs dry.
+def interleave(
+    streams: list[tuple[str, Iterator[Candidate]]],
+    on_error: Callable[[str, Exception], None] | None = None,
+) -> Iterator[Candidate]:
+    """Merge named candidate streams round-robin, dropping each as it runs dry.
 
     Chaining them instead - which is what this replaces - silently starved
     every arm after the first. ``max_images`` truncates the merged stream, and
@@ -87,14 +90,27 @@ def interleave(streams: list[Iterator[Candidate]]) -> Iterator[Candidate]:
     truncated budget spends itself on: Bluesky orders avatars ahead of feed
     images, and Vision orders page-anchored matches ahead of merely similar
     ones.
+
+    An arm that raises is dropped rather than allowed to end the run, and
+    ``on_error`` is told which one. Chaining hid the need for this by accident:
+    the optional arms sat behind Bluesky, which under the default cap never ran
+    out, so their code never executed and could not fail. Round-robin advances
+    every arm from the first pass, which is the point - and it means a single
+    unlucky response from an optional provider would otherwise take the whole
+    search down with it.
     """
     live = list(streams)
     while live:
-        for stream in list(live):
+        for entry in list(live):
+            _name, stream = entry
             try:
                 yield next(stream)
             except StopIteration:
-                live.remove(stream)
+                live.remove(entry)
+            except Exception as exc:  # noqa: BLE001 - an optional arm must not end a run
+                live.remove(entry)
+                if on_error is not None:
+                    on_error(_name, exc)
 
 
 def score_image(
@@ -141,7 +157,27 @@ def search_and_match(
     # query strings), and URL dedup cannot see that.
     by_digest: dict[str, tuple[float, int, list[int], float]] = {}
 
-    stream = _dedup(interleave([p.candidates(query) for p in providers]))
+    by_name = {p.name: p for p in providers if hasattr(p, "trace")}
+
+    def arm_failed(name: str, exc: Exception) -> None:
+        """Record that an arm died, without recording what it said.
+
+        Only the exception's type is kept. A requests failure carries the URL
+        it was fetching, and the Vision arm passes its API key as a query
+        parameter - so the message would put a live credential into the
+        evidence bundle, which is published and hashed on chain.
+        """
+        provider = by_name.get(name)
+        if provider is not None:
+            provider.trace.record(f"{name}.failed",
+                                  {"error": type(exc).__name__}, 0)
+        if on_event:
+            on_event({"type": "provider_failed", "provider": name,
+                      "error": type(exc).__name__})
+
+    stream = _dedup(interleave(
+        [(p.name, p.candidates(query)) for p in providers], on_error=arm_failed
+    ))
     stream = itertools.islice(stream, cfg.max_images)
 
     def fetch(c: Candidate) -> bytes | None:

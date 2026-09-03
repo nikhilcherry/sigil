@@ -1,6 +1,7 @@
 """Search-layer behaviour, exercised without touching the network."""
 
 import itertools
+import json
 
 import numpy as np
 import pytest
@@ -79,7 +80,7 @@ def test_dedup_keeps_first_occurrence_of_each_image():
 
 
 def test_interleave_takes_from_every_stream_in_turn():
-    got = list(interleave([iter("abc"), iter("xy"), iter("1")]))
+    got = list(interleave([("a", iter("abc")), ("b", iter("xy")), ("c", iter("1"))]))
     assert got == ["a", "x", "1", "b", "y", "c"]
 
 
@@ -92,7 +93,7 @@ def test_interleave_is_lazy_and_does_not_drain_a_stream_to_reach_the_next():
             pulled.append(tag)
             yield f"{tag}{i}"
 
-    merged = interleave([counted("a", 100), counted("b", 100)])
+    merged = interleave([("a", counted("a", 100)), ("b", counted("b", 100))])
     first_four = [next(merged) for _ in range(4)]
     assert first_four == ["a0", "b0", "a1", "b1"]
     # One read-ahead per stream is inherent to round-robin; a hundred is not.
@@ -108,12 +109,75 @@ def test_a_prolific_arm_cannot_starve_the_others_out_of_the_budget():
     """
     prolific = (f"a{i}" for i in range(500))
     quiet = iter(["b0", "b1"])
-    budget = list(itertools.islice(interleave([prolific, quiet]), 20))
+    budget = list(itertools.islice(
+        interleave([("a", prolific), ("b", quiet)]), 20))
     assert "b0" in budget and "b1" in budget
 
 
 def test_interleave_over_no_streams_is_empty_not_a_hang():
     assert list(interleave([])) == []
+
+
+def test_an_arm_that_raises_is_dropped_rather_than_ending_the_run():
+    """Chaining hid the need for this: the optional arms never ran at all."""
+    def explodes():
+        yield "b0"
+        raise RuntimeError("the AppView returned something unexpected")
+
+    seen = []
+    got = list(interleave([("good", iter(["a0", "a1", "a2"])),
+                           ("bad", explodes())],
+                          on_error=lambda n, e: seen.append((n, type(e)))))
+    assert got == ["a0", "b0", "a1", "a2"]
+    assert seen == [("bad", RuntimeError)]
+
+
+def test_an_arm_failing_on_its_very_first_advance_is_survivable():
+    def explodes():
+        raise RuntimeError("no")
+        yield  # pragma: no cover - unreachable, makes this a generator
+
+    assert list(interleave([("bad", explodes()), ("good", iter(["x"]))])) == ["x"]
+
+
+def test_a_failing_arm_without_a_handler_is_still_not_fatal():
+    def explodes():
+        raise RuntimeError("no")
+        yield  # pragma: no cover - unreachable, makes this a generator
+
+    assert list(interleave([("bad", explodes()), ("good", iter(["x"]))])) == ["x"]
+
+
+def test_a_dead_arm_is_recorded_in_the_trace_without_its_message(monkeypatch):
+    """The message would carry the URL, and the Vision arm's URL carries a key."""
+    import sigil.search.matcher as m
+
+    monkeypatch.setattr(m, "fetch_image", lambda s, u, t: b"x")
+    monkeypatch.setattr(m, "score_image", lambda e, p, b, fp=None: (0.9, 1, [], 0.0))
+
+    class Exploding(FakeProvider):
+        name = "exploding"
+
+        def candidates(self, query):
+            raise RuntimeError("https://api.example/v1?key=SUPER-SECRET-VALUE")
+            yield  # pragma: no cover - unreachable, makes this a generator
+
+    good = FakeProvider([_candidate("https://a")])
+    bad = Exploding([])
+    bad.trace = ProviderTrace(provider="exploding")
+    events = []
+    result = search_and_match(
+        FakeEncoder({}), _face([1, 0, 0]), [good, bad], "q", 0.38, Config(),
+        on_event=events.append,
+    )
+
+    assert result.found, "one arm dying took the whole search with it"
+    failed = [c for t in result.trace for c in t["calls"]
+              if c["endpoint"].endswith(".failed")]
+    assert failed == [{"endpoint": "exploding.failed",
+                       "params": {"error": "RuntimeError"}, "results": 0}]
+    assert "SUPER-SECRET-VALUE" not in json.dumps(result.trace)
+    assert any(e["type"] == "provider_failed" for e in events)
 
 
 def test_serpapi_is_skipped_without_a_public_probe_url():
