@@ -6,6 +6,7 @@ import json
 import pytest
 
 from sigil.chain import ChainClient
+from sigil.config import Config
 from sigil.evidence import Evidence
 
 
@@ -483,3 +484,76 @@ def test_a_current_schema_says_nothing_about_schemas(cfg, evidence):
     v = _anchored(cfg, evidence).verify(evidence)
     assert v.ok
     assert not any("schema" in n for n in v.notes)
+
+
+# ---------------------------------------------------- the rpc backend's logic
+
+
+def _rpc_cfg(**kw):
+    """A config pointed at a real node, without needing one."""
+    cfg = Config()
+    cfg.chain_backend = "rpc"
+    cfg.rpc_url = "https://polygon-amoy-bor-rpc.publicnode.com"
+    cfg.private_key = "0x" + "11" * 32
+    for k, v in kw.items():
+        setattr(cfg, k, v)
+    return cfg
+
+
+def test_an_unreachable_node_names_the_endpoint(monkeypatch):
+    """The most likely first failure for anyone trying the rpc path.
+
+    The README documents that the endpoint most guides cite was unreachable
+    during development, so this message is the one that tells someone to try
+    another - it has to carry the URL it actually tried.
+    """
+    import sigil.chain.client as client_mod
+
+    class NeverConnects:
+        def __init__(self, *a, **kw):
+            self.middleware_onion = type("M", (), {"inject": lambda *a, **k: None})()
+
+        @staticmethod
+        def HTTPProvider(*a, **kw):  # noqa: N802 - mirrors web3's own name
+            return None
+
+        def is_connected(self):
+            return False
+
+    monkeypatch.setattr(client_mod, "Web3", NeverConnects)
+    with pytest.raises(RuntimeError, match="cannot reach RPC endpoint"):
+        ChainClient(_rpc_cfg())
+
+
+def test_the_rpc_backend_demands_a_url_and_a_key():
+    """Both refusals are what `sigil chain address --chain rpc` reports first."""
+    cfg = _rpc_cfg(rpc_url=None)
+    with pytest.raises(RuntimeError, match="SIGIL_RPC_URL is required"):
+        ChainClient(cfg)
+
+    cfg = _rpc_cfg(private_key=None)
+    with pytest.raises(RuntimeError, match="SIGIL_PRIVATE_KEY is required"):
+        ChainClient(cfg)
+
+
+def test_an_explorer_link_is_built_for_a_real_chain_and_not_for_the_local_one(cfg):
+    """A block-explorer URL for a chain nobody else can see would be a lie."""
+    local = ChainClient(cfg)
+    assert local._explorer("0xabc") is None
+
+    rpc = ChainClient.__new__(ChainClient)
+    rpc.backend = "rpc"
+    rpc.cfg = _rpc_cfg(explorer_base="https://amoy.polygonscan.com/")
+    assert rpc._explorer("0xabc") == "https://amoy.polygonscan.com/tx/0xabc"
+
+
+def test_the_rpc_backend_reuses_a_configured_contract_rather_than_redeploying():
+    """SIGIL_CONTRACT exists so a second run does not deploy a second registry."""
+    rpc = ChainClient.__new__(ChainClient)
+    rpc.backend = "rpc"
+    rpc.local = None
+    rpc.cfg = _rpc_cfg(contract_address="0xF2E246BB76DF876Cef8b38ae84130F4F55De395b")
+    assert rpc.deployed_address() == "0xF2E246BB76DF876Cef8b38ae84130F4F55De395b"
+
+    rpc.cfg = _rpc_cfg(contract_address=None)
+    assert rpc.deployed_address() is None
