@@ -67,6 +67,13 @@ pipeline, same code path; the CLI and the UI are two front ends over one
 Prefer no heavy model download? `pip install -e ".[dev]"`, run
 `./scripts/fetch_models.sh` (37 MB), and everything works on the OpenCV backend.
 
+If a future dependency release breaks that install, `requirements.lock` is the
+exact set this was last verified against — `pip install -r requirements.lock -e .`
+reproduces it. The dependency ranges in `pyproject.toml` stay deliberately
+loose so CI installs whatever resolves latest and a breaking upstream release
+shows up as a red badge rather than silently; the lockfile is the escape hatch,
+not the default. Verified by installing a fresh clone from it alone.
+
 The encoder runs on the GPU automatically when onnxruntime has a working CUDA
 provider, and on CPU otherwise. `sigil backends` reports which one actually
 answered — not which one was requested, since an unusable CUDA provider can
@@ -225,7 +232,7 @@ Both backends find the same live match on a clean clone, so the fallback is a
 real alternative rather than a degraded mode. Verified from an actual fresh
 clone of `main` on 2026-09-03, with no API keys in the environment and the
 insightface extra not installed: `pip install -e ".[dev]"`,
-`./scripts/fetch_models.sh`, then 429 offline tests green at 95.46% coverage —
+`./scripts/fetch_models.sh`, then 467 offline tests green at 95.46% coverage —
 its own CI floor — and the documented quickstart matched `@aoc.bsky.social` at
 0.7411 against the opencv threshold of 0.363, picture-vs-probe 0.0728, so a
 genuinely different photograph, anchored at 114,222 gas.
@@ -732,7 +739,7 @@ verifying against new probes — pick one and keep it).
 ## Tests
 
 ```bash
-pytest -m "not network"   # 476 offline tests, 96% line coverage
+pytest -m "not network"   # 480 offline tests, 96% line coverage
 pytest -m network         # 3 tests against the live API and a live chain
 ```
 
