@@ -673,6 +673,16 @@ on yourself, on a consenting subject, or on a public figure for a demonstration.
   measured over whoever happens to be well-viewed on Wikipedia, which is not a
   balanced sample, so the aggregate rates above should not be read as holding
   evenly across groups.
+- **A similarity is not exact to more digits than it deserves.** The same
+  photograph, rescaled and recompressed the way republication does it, scores
+  up to **0.0613** apart under the same encoder — measured over 161 real
+  candidates at fingerprint correlations of 0.9999, where the two pictures are
+  indistinguishable at 32×32. ArcFace is resolution-sensitive at that scale.
+  It does not threaten the separation between the two populations, which is
+  0.64 against 0.005, but it does mean a candidate within about 0.06 of the
+  threshold is undecided rather than decided, whichever side of it the printed
+  number happens to fall.
+
 - **The chain proves integrity, not truth.** Anchoring establishes that a
   bundle existed at a time and has not changed. It says nothing about whether
   the match was *correct*. A confidently wrong match, anchored, is a permanent
