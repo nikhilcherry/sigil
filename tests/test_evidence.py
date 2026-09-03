@@ -335,3 +335,56 @@ def test_the_canonical_bytes_are_sorted_compact_and_utf8():
     keys = ("match", "probe", "schema", "searched_at", "similarity")
     positions = [text.index(f'"{k}"') for k in keys]
     assert positions == sorted(positions), "top-level keys are not sorted"
+
+
+# --------------------------------------------------- writing it out durably
+
+
+def test_the_bundle_is_written_atomically(evidence, tmp_path):
+    """It is the one file here that cannot be regenerated.
+
+    Chain state is written atomically and can be rebuilt by re-running. This
+    file cannot: its hash is anchored, and the search that produced it was
+    live, so a second run returns different candidates and a different
+    timestamp. A bundle truncated by a crash is a permanent orphan - a record
+    on chain that nothing can ever verify again.
+    """
+    path = tmp_path / "evidence.json"
+    evidence.write(path)
+
+    assert path.read_bytes() == evidence.canonical_json()
+    assert not (tmp_path / "evidence.json.tmp").exists(), "the temp file was left behind"
+
+
+def test_a_failed_write_leaves_the_previous_bundle_intact(evidence, tmp_path,
+                                                          monkeypatch):
+    """The property atomicity buys: no half-written file under the real name."""
+    path = tmp_path / "evidence.json"
+    evidence.write(path)
+    original = path.read_bytes()
+
+    def explode(*_a, **_kw):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr("sigil.evidence.os.fsync", explode)
+
+    altered = Evidence.from_dict({**evidence.to_dict(), "searched_at": "later"})
+    with pytest.raises(OSError):
+        altered.write(path)
+
+    assert path.read_bytes() == original, "a failed write damaged the good bundle"
+
+
+def test_writing_creates_the_directory_if_it_is_missing(evidence, tmp_path):
+    path = tmp_path / "nested" / "deeper" / "evidence.json"
+    evidence.write(path)
+    assert path.exists()
+
+
+def test_the_written_bytes_are_the_hash_preimage(evidence, tmp_path):
+    """The file on disk must be exactly what was hashed, not a re-serialisation."""
+    from eth_utils import keccak
+
+    path = tmp_path / "evidence.json"
+    evidence.write(path)
+    assert "0x" + keccak(path.read_bytes()).hex() == evidence.evidence_hash_hex()

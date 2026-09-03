@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from eth_utils import keccak
@@ -91,6 +93,31 @@ class Evidence:
             float(self.match.probe_photo_similarity), 6
         )
         return d
+
+    def write(self, path: Path) -> None:
+        """Write the canonical bytes to disk, durably.
+
+        A temporary file, flushed and fsynced, then atomically renamed - for
+        the same reason the local chain does it, and a stronger one. Chain
+        state can be rebuilt by re-running; this file cannot. Its hash is
+        anchored, and the search that produced it was live, so a second run
+        returns different candidates and a different timestamp. A bundle
+        truncated by a crash or a full disk is therefore not an inconvenience,
+        it is a permanent orphan: a record on chain that nothing can ever
+        verify again.
+
+        Remaining limit: the rename's own durability would need an fsync on the
+        containing directory, which is platform-specific enough not to be worth
+        it here. The window this closes is the one that matters - a partially
+        written file being visible under the real name.
+        """
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".tmp")
+        with open(tmp, "wb") as fh:
+            fh.write(self.canonical_json())
+            fh.flush()
+            os.fsync(fh.fileno())
+        tmp.replace(path)
 
     def canonical_json(self) -> bytes:
         return json.dumps(

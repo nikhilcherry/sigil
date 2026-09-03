@@ -81,8 +81,7 @@ def _run_job(job: Job, probe_path: Path, query: str, opts: dict[str, Any]) -> No
         result = run_pipeline(str(probe_path), query, cfg, do_anchor=True,
                               on_event=job.emit)
         if result.evidence is not None:
-            EVIDENCE_PATH.parent.mkdir(parents=True, exist_ok=True)
-            EVIDENCE_PATH.write_bytes(result.evidence.canonical_json())
+            result.evidence.write(EVIDENCE_PATH)
     except PipelineError as exc:
         job.emit({"type": "error", "message": str(exc)})
     except Exception as exc:  # noqa: BLE001 - surface it in the UI, never hang the stream
@@ -101,7 +100,7 @@ def _tamper(field: str) -> dict[str, Any]:
     data = json.loads(original.canonical_json())
     before, after = alter_field(data, field)
     tampered = Evidence.from_dict(data)
-    TAMPERED_PATH.write_bytes(tampered.canonical_json())
+    tampered.write(TAMPERED_PATH)
 
     client = ChainClient(Config())
     return {

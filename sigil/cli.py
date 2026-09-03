@@ -59,10 +59,11 @@ def _load_evidence(path: Path) -> Evidence:
 
 
 def _write_evidence(evidence: Evidence, path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    # Written as the exact canonical bytes that were hashed, so the file on disk
-    # IS the preimage - no re-serialisation step can drift from what was anchored.
-    path.write_bytes(evidence.canonical_json())
+    # The exact canonical bytes that were hashed, so the file on disk IS the
+    # preimage - no re-serialisation step can drift from what was anchored -
+    # and written atomically, because it cannot be regenerated. See
+    # Evidence.write.
+    evidence.write(path)
 
 
 @click.group(context_settings={"help_option_names": ["-h", "--help"]})
