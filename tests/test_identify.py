@@ -498,3 +498,79 @@ def test_a_failed_wikidata_batch_costs_only_that_batch(monkeypatch):
     people = idmod.resolve_people(session, "en", titles)
 
     assert len(people) == 55
+
+
+# ---------------------------------------------- which months get harvested
+
+
+def test_months_returns_the_last_complete_months_newest_first(monkeypatch):
+    """Date arithmetic driving which pageview data a build asks for.
+
+    If this drifted the build would query months that do not exist and harvest
+    nothing, which looks like a network problem rather than a bug. The current
+    month is deliberately excluded: its pageview data is still accruing.
+    """
+    import datetime as _dt
+
+    import sigil.identify as ident
+
+    class Sept(_dt.date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 9, 15)
+
+    monkeypatch.setattr(_dt, "date", Sept)
+    assert ident._months(3) == ["2026/08", "2026/07", "2026/06"]
+
+
+def test_months_crosses_a_year_boundary(monkeypatch):
+    """January is where naive month arithmetic gives 2026/00 or 2026/12."""
+    import datetime as _dt
+
+    import sigil.identify as ident
+
+    class Jan(_dt.date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 1, 3)
+
+    monkeypatch.setattr(_dt, "date", Jan)
+    assert ident._months(4) == ["2025/12", "2025/11", "2025/10", "2025/09"]
+
+
+def test_months_starting_from_the_first_of_a_month_still_looks_back(monkeypatch):
+    """The boundary the implementation walks off: day 1 of the current month."""
+    import datetime as _dt
+
+    import sigil.identify as ident
+
+    class FirstOfMarch(_dt.date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 3, 1)
+
+    monkeypatch.setattr(_dt, "date", FirstOfMarch)
+    assert ident._months(2) == ["2026/02", "2026/01"]
+
+
+def test_months_of_none_is_empty_not_an_error():
+    import sigil.identify as ident
+
+    assert ident._months(0) == []
+
+
+def test_months_are_zero_padded_so_the_api_accepts_them(monkeypatch):
+    """Wikimedia's pageviews path wants 2026/08, not 2026/8."""
+    import datetime as _dt
+
+    import sigil.identify as ident
+
+    class Oct(_dt.date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 10, 20)
+
+    monkeypatch.setattr(_dt, "date", Oct)
+    got = ident._months(3)
+    assert got == ["2026/09", "2026/08", "2026/07"]
+    assert all(len(m) == 7 for m in got)

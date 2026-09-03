@@ -202,3 +202,23 @@ def test_similarity_basis_points_span_the_whole_cosine_range(evidence):
     assert evidence.similarity_bps() == 10000
     evidence.similarity = 0.7596
     assert evidence.similarity_bps() == 7596
+
+
+def test_a_typo_in_the_first_path_segment_names_the_fields_too(evidence):
+    """A different error path from a typo'd leaf, and a different message.
+
+    `--field noshuch.text` fails while walking to the leaf rather than at it,
+    which is the branch a typo in the first segment takes.
+    """
+    from sigil.evidence import alter_field
+
+    with pytest.raises(ValueError, match="no field 'nosuch'") as exc:
+        alter_field(_bundle_dict(evidence), "nosuch.text")
+    assert "match.text" in str(exc.value)
+
+
+def test_a_deep_path_that_runs_out_partway_names_where_it_stopped(evidence):
+    from sigil.evidence import alter_field
+
+    with pytest.raises(ValueError, match="no field 'match.nope'"):
+        alter_field(_bundle_dict(evidence), "match.nope.deeper")
