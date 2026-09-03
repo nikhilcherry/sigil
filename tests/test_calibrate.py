@@ -623,3 +623,24 @@ def test_the_panel_says_so_rather_than_printing_nothing(tmp_path, monkeypatch):
     out = cap.get()
     assert "nothing left to measure" in out
     assert "nan" not in out.lower()
+
+
+def test_an_index_too_small_to_have_pairs_refuses_with_a_reason():
+    """A build interrupted after one portrait leaves exactly this index.
+
+    Every statistic here is a reduction over the impostor pairs, so with none
+    of them numpy emits three warnings and then "zero-size array to reduction
+    operation minimum", which tells the operator nothing about what to do.
+    """
+    index = _index([[1, 0]], names=["Only"])
+    by_qid, _ = _population([0.9], [])
+    with pytest.raises(RuntimeError, match="no cross-identity pairs"):
+        measure(FakeEncoder(), index, by_qid, threshold=0.38)
+
+
+def test_two_faces_are_enough_to_measure():
+    """The boundary: one pair is a population, zero is not."""
+    index = _index([[1, 0], [0, 1]], names=["A", "B"])
+    by_qid, _ = _population([0.9], [])
+    c = measure(FakeEncoder(), index, by_qid, threshold=0.38)
+    assert c.impostor.pairs == 1

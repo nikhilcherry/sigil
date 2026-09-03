@@ -446,6 +446,16 @@ def measure(
             "no identity ended up with two usable portraits - nothing to measure"
         )
     impostor, iu = impostor_similarities(index)
+    # An index with fewer than two faces has no cross-identity pair, so there
+    # is no impostor population at all. Reachable: a build interrupted early
+    # leaves a partial index, and every statistic below would otherwise be a
+    # numpy warning followed by "zero-size array to reduction operation".
+    if impostor.size == 0:
+        raise RuntimeError(
+            f"the identity index holds {len(index)} face(s), so there are no "
+            "cross-identity pairs to measure a false-accept rate over. Build a "
+            "larger index with: sigil index build"
+        )
 
     artefacts = impostor >= ARTEFACT
     clean = impostor[~artefacts]
