@@ -592,3 +592,34 @@ def test_the_identity_table_quotes_the_rate_only_at_the_measured_threshold(
     with console.capture() as cap:
         identity_table({**event, "threshold": 0.60}, echo=True)
     assert "named anyway" not in cap.get()
+
+
+def test_an_index_of_nothing_but_duplicates_reports_no_clean_rate():
+    """A nan in a table of measured rates is worse than an absent number.
+
+    Unreachable with the real 3,583-identity index, and one line of code away
+    for anyone measuring a small or duplicate-heavy one.
+    """
+    index = _index([[1, 0], [1, 0]], names=["Dupe A", "Dupe B"])
+    by_qid, _ = _population([0.9], [])
+    c = measure(FakeEncoder(), index, by_qid, threshold=0.38)
+
+    assert c.fpr == 1.0, "the raw rate is still a real number"
+    assert c.fpr_excluding_artefacts is None
+    assert c.artefact_pairs == 1
+
+
+def test_the_panel_says_so_rather_than_printing_nothing(tmp_path, monkeypatch):
+    import sigil.calibrate as cal
+    from sigil.report import calibration_panel, console
+
+    index = _index([[1, 0], [1, 0]], names=["Dupe A", "Dupe B"])
+    by_qid, _ = _population([0.9], [])
+    c = measure(FakeEncoder(), index, by_qid, threshold=0.38)
+    monkeypatch.setattr(cal, "CALIBRATION_PATH", tmp_path / "c.json")
+
+    with console.capture() as cap:
+        calibration_panel(c)
+    out = cap.get()
+    assert "nothing left to measure" in out
+    assert "nan" not in out.lower()

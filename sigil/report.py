@@ -302,10 +302,16 @@ def calibration_panel(c) -> None:
     r.add_row("true positive rate", f"[bold green]{c.tpr * 100:.2f}%[/bold green] "
                                     f"[dim]of same-person pairs are caught[/dim]")
     r.add_row("false positive rate", _sci(c.fpr))
-    r.add_row("  discounting artefacts",
-              f"{_sci(c.fpr_excluding_artefacts)} [dim]dropping the "
-              f"{c.artefact_pairs} pairs at ≥ 0.99, which are one person "
-              f"indexed twice[/dim]")
+    if c.fpr_excluding_artefacts is None:
+        r.add_row("  discounting artefacts",
+                  f"[yellow]nothing left to measure[/yellow] [dim]— all "
+                  f"{c.artefact_pairs} impostor pairs are at ≥ 0.99, so this "
+                  f"index holds duplicates and little else[/dim]")
+    else:
+        r.add_row("  discounting artefacts",
+                  f"{_sci(c.fpr_excluding_artefacts)} [dim]dropping the "
+                  f"{c.artefact_pairs} pairs at ≥ 0.99, which are one person "
+                  f"indexed twice[/dim]")
     r.add_row("equal error rate",
               f"{c.eer * 100:.2f}% [dim]at threshold {c.eer_threshold:.2f}[/dim]")
     for name, t in c.thresholds_for_fpr.items():

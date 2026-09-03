@@ -132,7 +132,10 @@ class Calibration:
     impostor: Distribution
     tpr: float
     fpr: float
-    fpr_excluding_artefacts: float
+    # None when every impostor pair turned out to be an artefact, so there is
+    # nothing left to compute a rate over. Reporting nan in a table of measured
+    # rates would be worse than reporting nothing.
+    fpr_excluding_artefacts: float | None
     artefact_pairs: int
     eer: float
     eer_threshold: float
@@ -483,7 +486,9 @@ def measure(
         impostor=Distribution.of(impostor, (50, 99, 99.9, 99.99)),
         tpr=tpr,
         fpr=fpr,
-        fpr_excluding_artefacts=float((clean >= threshold).mean()),
+        fpr_excluding_artefacts=(
+            float((clean >= threshold).mean()) if clean.size else None
+        ),
         artefact_pairs=int(artefacts.sum()),
         eer=float(eer),
         eer_threshold=curve[at]["threshold"],
