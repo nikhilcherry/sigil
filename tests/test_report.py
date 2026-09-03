@@ -265,3 +265,87 @@ def test_the_candidate_table_marks_multi_face_images_without_a_column():
     out = cap.get()
     assert "·4" in out, "a multi-face candidate is not marked"
     assert "·1" not in out, "single-face candidates should not be marked"
+
+
+# ------------------------------------- markup written by somebody else
+
+MARKUP_PAYLOAD = "[bold green]VERIFIED[/bold green] Nice Person"
+LINK_PAYLOAD = "[link=file:///etc/passwd]click[/link]"
+
+
+def test_a_display_name_cannot_style_itself_in_the_match_panel(evidence):
+    """The terminal output is what a screen recording shows as the evidence.
+
+    rich reads `[...]` as styling, so an account whose display name is
+    `[bold green]VERIFIED[/bold green]` printed itself in bold green - the same
+    styling this report uses for a passing check. An account able to style its
+    own row can forge the appearance of a verdict.
+    """
+    from sigil.report import console, match_panel
+
+    evidence.match.author_display_name = MARKUP_PAYLOAD
+    evidence.match.text = LINK_PAYLOAD
+
+    with console.capture() as cap:
+        match_panel(evidence)
+    out = cap.get()
+
+    assert "[bold green]" in out, "the markup was interpreted, not shown"
+    assert "[/bold green]" in out
+    assert "[link=file:///etc/passwd]" in out
+
+
+def test_a_handle_cannot_style_itself_in_the_candidate_table():
+    from sigil.report import console, search_panel
+    from sigil.search.base import Candidate
+    from sigil.search.matcher import MatchResult, ScoredCandidate
+
+    hostile = ScoredCandidate(
+        candidate=Candidate(
+            platform="bluesky", image_url="https://i", post_url="https://p",
+            post_uri="at://p", author_handle=MARKUP_PAYLOAD, author_did="",
+            author_display_name="", text="", created_at="",
+            discovered_via="app.bsky.actor.searchActors:avatar",
+            source_kind="social"),
+        similarity=0.9, image_sha256="ab" * 32, faces_in_image=1,
+        matched_bbox=[0, 0, 1, 1], photo_similarity=0.02, rank=1)
+
+    with console.capture() as cap:
+        search_panel(MatchResult(best=hostile, ranked=[hostile]), 0.38, ["bluesky"])
+    assert "[bold green]" in cap.get()
+
+
+def test_a_wikidata_label_cannot_style_itself_in_the_identity_table():
+    """Index names come from Wikidata, which is also somebody else's text."""
+    from sigil.report import console, identity_table
+
+    event = {"index_size": 1, "threshold": 0.45, "hits": [
+        {"name": "ok", "similarity": 0.9, "source": MARKUP_PAYLOAD,
+         "accepted": True}]}
+    with console.capture() as cap:
+        identity_table(event, echo=True)
+    assert "[bold green]" in cap.get()
+
+
+def test_a_verification_note_cannot_style_itself(evidence):
+    """Notes quote provider-supplied values back to the reader."""
+    from sigil.chain.client import Verification
+    from sigil.report import console, verification_panel
+
+    v = Verification(evidence_hash="0x00", anchored=True)
+    v.notes.append(MARKUP_PAYLOAD)
+    with console.capture() as cap:
+        verification_panel(v)
+    assert "[bold green]" in cap.get()
+
+
+def test_the_report_still_styles_its_own_output(evidence):
+    """The escaping must not have flattened the report's own markup."""
+    from sigil.report import console, match_panel
+
+    with console.capture() as cap:
+        match_panel(evidence)
+    out = cap.get()
+    # Its own labels render as text, not as literal tags.
+    assert "[bold green]" not in out
+    assert "identity" in out and "Match found" in out

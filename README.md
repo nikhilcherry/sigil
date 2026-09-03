@@ -732,7 +732,7 @@ verifying against new probes — pick one and keep it).
 ## Tests
 
 ```bash
-pytest -m "not network"   # 464 offline tests, 96% line coverage
+pytest -m "not network"   # 469 offline tests, 96% line coverage
 pytest -m network         # 3 tests against the live API and a live chain
 ```
 
@@ -818,17 +818,26 @@ on yourself, on a consenting subject, or on a public figure for a demonstration.
   the probe's embedding from its pixels, the source image's bytes, and the
   identity-vs-provenance claim from the two images — but no amount of
   re-derivation makes a face model right.
-- **Candidate *text* is chosen by a third party too, and the web UI renders
-  it.** A Bluesky display name is set by whoever owns the account; an
-  identity-index label comes from Wikidata. Both were interpolated straight
-  into `innerHTML`, so a display name of `<img src=x onerror=…>` executed in a
-  page served from localhost — with `/api/run`, `/api/tamper` and
-  `/api/evidence` one `fetch` away. A `post_url` of `javascript:…` was the same
-  hole with an extra click. Everything untrusted is HTML-escaped now, anything
-  becoming an `href` goes through an `http(s)`-only allowlist, and a rejected
-  URL becomes `#` rather than passing through. Both the hole and the fix were
-  confirmed in a real browser rather than reasoned about; a lint-style test
-  guards the shape, since pytest cannot run the page.
+- **Candidate *text* is chosen by a third party too, and both front ends
+  render it.** In the terminal that matters more than it sounds, because the
+  terminal output is what a screen recording shows as the evidence. `rich`
+  reads `[...]` as styling, so an account whose display name was
+  `[bold green]VERIFIED[/bold green]` printed itself in bold green — the same
+  styling this tool uses for a passing check — and `[link=…]` becomes a
+  clickable link in terminals that support it. An account able to style its own
+  row can forge the appearance of a verdict. Every field a provider or Wikidata
+  supplies is escaped before `rich` sees it.
+
+  The web UI had the sharper version of the same hole. Those fields went
+  straight into `innerHTML`, so a display name of `<img src=x onerror=…>`
+  *executed* — in a page served from localhost, with `/api/run`,
+  `/api/tamper` and `/api/evidence` one `fetch` away — and a `post_url` of
+  `javascript:…` was the same thing with an extra click. Everything untrusted
+  is HTML-escaped now, anything becoming an `href` goes through an
+  `http(s)`-only allowlist, and a rejected URL becomes `#` rather than passing
+  through. Both the hole and the fix were confirmed in a real browser rather
+  than reasoned about; a lint-style test guards the shape, since pytest cannot
+  run the page.
 
 - **A candidate URL is chosen by a third party, so it is checked before it is
   fetched.** Every image this tool downloads is at an address supplied by

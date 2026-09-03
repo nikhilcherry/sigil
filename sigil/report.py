@@ -5,11 +5,28 @@ from __future__ import annotations
 from typing import Any
 
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
 console = Console()
+
+
+def q(value: Any) -> str:
+    """Render a value that somebody else wrote, as text rather than as markup.
+
+    rich reads `[...]` as styling, so a Bluesky display name of
+    `[bold green]VERIFIED[/bold green]` printed itself in bold green - the same
+    styling this report uses for a passing check - and `[link=...]` makes a
+    clickable link in terminals that support it. Every field a provider or
+    Wikidata supplies goes through here.
+
+    This matters more than it looks: the terminal output is what a screen
+    recording shows as the evidence, so an account able to style its own row
+    can forge the appearance of a verdict.
+    """
+    return escape(str(value))
 
 OK = "[bold green]PASS[/bold green]"
 BAD = "[bold red]FAIL[/bold red]"
@@ -87,8 +104,8 @@ def search_panel(result, threshold: float, providers: list[str]) -> None:
             Text(("different photo" if identity else "same photo")
                  + (f" ·{s.faces_in_image}" if s.faces_in_image > 1 else ""),
                  style="green" if identity else "yellow"),
-            s.candidate.author_handle or s.candidate.platform,
-            s.candidate.discovered_via.replace("app.bsky.", ""),
+            q(s.candidate.author_handle or s.candidate.platform),
+            q(s.candidate.discovered_via.replace("app.bsky.", "")),
         )
     console.print(tbl)
     if marked:
@@ -112,13 +129,13 @@ def match_panel(evidence, scored=None) -> None:
     t = Table.grid(padding=(0, 2))
     t.add_column(style="dim", justify="right")
     t.add_column()
-    t.add_row("platform", f"{m.platform} [dim]({m.source_kind})[/dim]")
-    t.add_row("account", f"{m.author_display_name} [cyan]@{m.author_handle}[/cyan]")
-    t.add_row("post", f"[link={m.post_url}]{m.post_url}[/link]")
-    t.add_row("image", m.image_url[:96])
-    t.add_row("image sha256", m.image_sha256)
+    t.add_row("platform", f"{q(m.platform)} [dim]({q(m.source_kind)})[/dim]")
+    t.add_row("account", f"{q(m.author_display_name)} [cyan]@{q(m.author_handle)}[/cyan]")
+    t.add_row("post", q(m.post_url))
+    t.add_row("image", q(m.image_url[:96]))
+    t.add_row("image sha256", q(m.image_sha256))
     if m.text:
-        t.add_row("text", m.text[:160])
+        t.add_row("text", q(m.text[:160]))
     t.add_row("similarity", f"[bold green]{evidence.similarity:.4f}[/bold green] "
                             f"[dim](threshold {evidence.threshold:.3f})[/dim]")
     if m.claim == "identity":
@@ -239,7 +256,7 @@ def verification_panel(v, title: str = "Verification") -> None:
         t.add_row("submitter", v.on_chain["submitter"])
         t.add_row("anchored at", str(v.on_chain["anchored_at"]))
     for note in v.notes:
-        t.add_row("note", f"[yellow]{note}[/yellow]")
+        t.add_row("note", f"[yellow]{q(note)}[/yellow]")
     console.print(
         Panel(
             t,
@@ -263,7 +280,7 @@ def identity_table(event: dict[str, Any], echo: bool = False):
         t.add_row(
             Text(f"{h['similarity']:.4f}", style="bold green" if ok else "yellow"),
             Text(h["name"], style="bold" if ok else "dim"),
-            h.get("source", ""),
+            q(h.get("source", "")),
         )
     t.caption = f"accepted at ≥ {threshold:.2f} cosine"
     rate = _false_name_rate(threshold)
@@ -350,7 +367,7 @@ def calibration_panel(c) -> None:
         for e in c.artefact_examples:
             a.add_row(Text(f"{e['similarity']:.4f}",
                            style="red" if e["similarity"] >= 0.99 else "yellow"),
-                      e["a"], e["b"])
+                      q(e["a"]), q(e["b"]))
         console.print(a)
 
     if c.false_name_rate is not None:
@@ -383,7 +400,7 @@ def calibration_panel(c) -> None:
             w.add_column("", style="dim")
             for e in c.wrongly_named:
                 w.add_row(Text(f"{e['similarity']:.4f}", style="yellow"),
-                          e["queried"], e["named"],
+                          q(e["queried"]), q(e["named"]),
                           "duplicate index entry" if e["duplicate_entry"] else "")
             console.print(w)
 
@@ -436,9 +453,9 @@ def records_table(rows: list[dict[str, Any]], total: int) -> None:
     for r in rows:
         t.add_row(
             str(r["index"]),
-            r["evidence_hash"][:22] + "…",
+            q(r["evidence_hash"][:22]) + "…",
             f"{r['similarity_bps'] / 10000:.4f}",
-            r["submitter"][:12] + "…",
+            q(r["submitter"][:12]) + "…",
             str(r["anchored_at"]),
         )
     console.print(t)
