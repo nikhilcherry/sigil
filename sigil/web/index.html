@@ -514,6 +514,7 @@ function handle(e){
       $("m-fetched").textContent = e.examined;
       break;
 
+    case "provider_failed": providerFailed(e); break;
     case "match":       showMatch(e); break;
     case "nomatch":     showNoMatch(e); break;
     case "anchor":      showAnchor(e); break;
@@ -525,6 +526,18 @@ function stageFailAll(){
   document.querySelectorAll(".ladder li.act").forEach(li => {
     li.classList.remove("act"); li.classList.add("bad");
   });
+}
+
+/* A search arm that died is reported, not swallowed. It does not end the run -
+   the others carry on - but a quietly narrower search is exactly the thing this
+   tool must not do without saying so. */
+function providerFailed(e){
+  const box = $("errbox");
+  box.insertAdjacentHTML("beforeend",
+    `<div class="err" style="border-color:var(--amber);color:var(--amber);background:rgba(255,178,36,.06)">
+       search arm <b>${e.provider}</b> failed (${e.error}) and was dropped — the run continued with the others,
+       against a narrower set of candidates.
+     </div>`);
 }
 
 /* ---------- candidate contact sheet ---------- */
@@ -637,6 +650,7 @@ const CHECKS = [
   ["subject_matches","subject commitment"],
   ["probe_matches","probe re-encodes"],
   ["source_image_intact","source image intact"],
+  ["claim_reproduces","claim re-derives"],
 ];
 
 function showVerification(v){

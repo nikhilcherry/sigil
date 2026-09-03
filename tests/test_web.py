@@ -360,3 +360,30 @@ def test_a_hostile_mime_cannot_steer_where_the_probe_is_written(app, tmp_path,
         assert path.resolve().is_relative_to(probes.resolve()), path
         assert path.parent.resolve() == probes.resolve(), f"escaped into {path.parent}"
         assert path.name.startswith("probe"), path.name
+
+
+def test_every_check_the_ui_renders_is_a_key_the_server_actually_sends():
+    """A row the payload never fills reads as NOT RUN forever, silently.
+
+    The two lists are in different files and different languages, so nothing
+    else would notice one of them gaining a field the other did not.
+    """
+    import re
+    from pathlib import Path
+
+    from sigil.chain.client import Verification
+    from sigil.pipeline import verification_payload
+
+    html = (Path(__file__).resolve().parent.parent
+            / "sigil" / "web" / "index.html").read_text()
+    start = html.index("const CHECKS")
+    # To the "];" that closes the array - not the first "]", which closes the
+    # first pair and would leave this test asserting one key and passing
+    # whatever the rest of the list said.
+    block = html[start:html.index("];", start)]
+    rendered = set(re.findall(r'\["(\w+)"', block))
+    assert len(rendered) >= 5, f"CHECKS list parsed as only {rendered}"
+
+    sent = set(verification_payload(Verification(evidence_hash="0x", anchored=True)))
+    missing = rendered - sent
+    assert not missing, f"the UI renders checks the server never sends: {missing}"
