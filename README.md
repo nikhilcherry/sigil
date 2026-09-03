@@ -360,19 +360,25 @@ person with *different photographs*, which is a real second capture — differen
 year, angle and lighting — still labelled by Wikidata rather than by this code.
 Fifteen Wikipedias yield about eleven distinct portraits per person.
 
-Measured over 60 sampled identities on the insightface backend:
+Measured over 400 sampled identities on the insightface backend — 379 of them
+born after 1900, yielding 1,275 usable portraits across 323 people:
 
 | | pairs | mean | sd | median | max |
 |---|---|---|---|---|---|
-| same person | 320 | 0.6211 | 0.1631 | 0.6211 | 0.9941 |
+| same person | 2,069 | 0.6403 | 0.1650 | 0.6385 | 0.9997 |
 | different people | 6,417,153 | 0.0048 | 0.0582 | 0.0035 | 1.0000 |
 
 | at threshold 0.380 | |
 |---|---|
-| true positive rate | **94.69%** of same-person pairs caught |
+| true positive rate | **94.44%** of same-person pairs caught |
 | false positive rate | **2.836 × 10⁻⁵** — 1 in 35,259 |
-| equal error rate | 0.58%, at threshold 0.17 |
+| equal error rate | 0.56%, at threshold 0.17 |
 | threshold for a 10⁻⁶ false-accept rate | 0.5872 |
+
+The genuine sample was grown 6.5× (320 pairs → 2,069) to check the numbers were
+not an artefact of a small sample. They moved by a quarter of a point: 94.69% →
+94.44% true positives, 0.58% → 0.56% equal error. That stability is the reason
+to quote them at all.
 
 So 0.38 is well to the strict side of the equal-error point: it gives up recall
 to buy a much lower false-accept rate, which is the right way round for a tool
@@ -412,13 +418,17 @@ the hardest same-person pairs were every combination of portraits of Alexander
 the Great — a Roman bust against a Pompeian mosaic against a coin. Scoring a
 face recogniser on those measures whether two sculptors agreed. Restricting
 genuine pairs to people born after 1900 moved the true-positive rate from
-74.18% to 94.69% and the equal error rate from 6.33% to 0.58%. `--born-after 0`
-turns the filter off if you want to see it for yourself.
+74.18% to 94.69% and the equal error rate from 6.33% to 0.58% on the sample it
+was first measured on. `--born-after 0` turns the filter off if you want to see
+it for yourself.
 
-*The hard cases are the ones you would predict.* With the filter on, the lowest
-genuine similarities are people photographed decades apart — Al Pacino at
-0.2431, Andre Agassi at 0.2455 — which is age, not error, and is exactly what a
-threshold this strict is choosing to miss.
+*The hard cases are the ones you would predict, plus one that is not.* With the
+filter on, the low end of the genuine distribution is people photographed
+decades apart — Al Pacino at 0.2431, Andre Agassi at 0.2455 — which is age, not
+error, and exactly what a threshold this strict chooses to miss. Below even
+that, at −0.02 to 0.05, sit a handful of footballers whose lead images differ
+across wikis by more than lighting; those are the group-photo mislabelling the
+method warns about, left in because a hand-corrected set is not a measurement.
 
 #### Naming a face is a different question, and a much harder one
 
