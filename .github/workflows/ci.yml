@@ -49,7 +49,13 @@ jobs:
         run: ruff check .
 
       - name: Test
-        run: pytest -m "not network" -q --cov=sigil --cov-report=term-missing
+        # --cov-fail-under enforces the figure the README prints. Measured at
+        # 93.29%, so the gate is set at the whole number below it: a claim
+        # nothing checks is the same shape of problem as a threshold nothing
+        # measures, which is most of what this project is about.
+        run: >
+          pytest -m "not network" -q
+          --cov=sigil --cov-report=term-missing --cov-fail-under=93
 
   live:
     # Third-party APIs are the realistic breakage here, so they are checked on a
