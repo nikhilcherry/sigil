@@ -399,3 +399,12 @@ def test_a_tamper_field_that_is_a_list_asks_for_a_value(evidence, tmp_path):
     assert result.exit_code != 0
     assert "Traceback" not in result.output
     assert "pass --value" in result.output
+
+
+def test_calibrate_show_exits_non_zero_when_nothing_is_measured(monkeypatch,
+                                                                tmp_path):
+    """demo.sh gates on this exit code, so a fresh clone must not fail the run."""
+    import sigil.calibrate as cal
+
+    monkeypatch.setattr(cal, "CALIBRATION_PATH", tmp_path / "absent.json")
+    assert CliRunner().invoke(cli, ["calibrate", "--show"]).exit_code != 0

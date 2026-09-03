@@ -519,7 +519,9 @@ Verification: NOT VERIFIED   (exit 1)
 ```
 
 One character changes the hash, and the altered bundle has no chain record.
-`./scripts/demo.sh` runs this whole sequence end to end for a screen recording.
+`./scripts/demo.sh` runs this whole sequence end to end for a screen recording,
+and closes on `sigil calibrate --show` — the measured cost of the threshold
+everything before it rested on.
 
 The web UI has the same two buttons. Tampering there marks every differing
 nibble of the digest in red, which makes the avalanche visible: edit one

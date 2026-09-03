@@ -72,3 +72,14 @@ else
 fi
 
 run chain info
+
+# The threshold everything above rests on, measured rather than asserted.
+# --show reads the cached measurement, so this is instant; a fresh clone has
+# not measured one yet, and says so rather than failing the recording.
+if "$PY" -m sigil.cli calibrate --show >/dev/null 2>&1; then
+  run calibrate --show
+else
+  echo
+  echo "  (no calibration measured yet — run 'sigil calibrate' to measure what"
+  echo "   the match threshold actually costs in false accepts and misses)"
+fi
