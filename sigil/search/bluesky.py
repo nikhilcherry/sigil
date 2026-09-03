@@ -139,14 +139,19 @@ class BlueskyProvider:
             return self._get("app.bsky.feed.getAuthorFeed", feed_params(actor))
 
         # Every avatar first, across all actors, before any feed image.
-        # Measured on a real run: 53% of avatars contain a detectable face
-        # against 20% of feed images, and the strongest live match in every run
-        # so far has been an avatar - it is the one picture an account chooses
-        # to represent a person by. They also cost nothing extra, since
-        # searchActors already returned them, so ordering them first is free
-        # recall for any run whose budget is smaller than what Bluesky offers.
-        # Which is every run: `max_images` defaults to 200 and 25 actors at 20
-        # posts each can propose ten times that.
+        # Measured over two labelled corpora, 538 real Bluesky candidates: 62%
+        # of avatars contain a detectable face (24/39) against 33% of feed
+        # images (167/499). The margin varies by query - 53% vs 20% on one
+        # corpus, 68% vs 49% on the other - but avatars won both, which is what
+        # the ordering rests on. The strongest live match in every run so far
+        # has also been an avatar; it is the one picture an account chooses to
+        # represent a person by.
+        #
+        # They cost nothing extra, since searchActors already returned them, so
+        # ordering them first is free recall for any run whose budget is
+        # smaller than what Bluesky offers. Which is every run: `max_images`
+        # defaults to 200 and 25 actors at 20 posts each can propose ten times
+        # that.
         # The feeds are fetched concurrently but consumed in actor order, and
         # the trace is written here rather than in the workers, so both the
         # candidate stream and the audit record stay identical to a serial run.

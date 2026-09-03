@@ -487,12 +487,13 @@ def test_concurrent_feeds_do_not_reorder_the_candidate_stream():
 def test_every_avatar_comes_before_any_feed_image():
     """Avatars are the highest-signal faces and the cheapest to reach.
 
-    Measured on a real run: 53% of avatars contain a detectable face against
-    20% of feed images, and the strongest live match in every run so far has
-    been an avatar. They arrive inside the searchActors response, so putting
-    them first costs no extra request - and it matters because `max_images`
-    (200 by default) is always smaller than what 25 actors at 20 posts each
-    propose, so the tail of this stream is never examined.
+    Measured over 538 real Bluesky candidates across two labelled corpora: 62%
+    of avatars contain a detectable face against 33% of feed images, and the
+    strongest live match in every run so far has been an avatar. They arrive
+    inside the searchActors response, so putting them first costs no extra
+    request - and it matters because `max_images` (200 by default) is always
+    smaller than what 25 actors at 20 posts each propose, so the tail of this
+    stream is never examined.
     """
     provider = _bsky_provider(_actors(6))
     vias = [c.discovered_via for c in provider.candidates("q")]
