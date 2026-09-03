@@ -27,9 +27,10 @@ from typing import Any
 import numpy as np
 
 from .concurrency import prefetch
-from .config import MODELS_DIR
+from .config import MODELS_DIR, Config
 from .face import decode_image, largest_face
 from .search.http import fetch_image, make_session
+from .search.matcher import PREFETCH_FACTOR, download_workers
 
 PAGEVIEWS = "https://wikimedia.org/api/rest_v1/metrics/pageviews/top/{wiki}/all-access/{ym}/all-days"
 DEFAULT_LANGS = ("en", "hi", "ta", "te", "ml", "bn", "mr", "kn", "es", "fr")
@@ -40,9 +41,10 @@ INDEX_META = MODELS_DIR / "identity-index.json"
 # Wikimedia, none of which depend on each other. Run in series it dominated
 # the build.
 HARVEST_WORKERS = 8
-# Portrait downloads, which feed a single-threaded encoder. Encoding is the
-# expensive half here, so this is sized to keep it fed, not to go faster.
-DOWNLOAD_WORKERS = 8
+# Portrait downloads, which feed a single-threaded encoder. Which half is
+# expensive depends on the encoder, so the count comes from the same place the
+# search path gets it: 8 when inference dominates, 16 when a GPU has made the
+# network the constraint instead. See sigil/search/matcher.py.
 
 # Article titles that are never people, but do rank highly.
 SKIP_PREFIXES = ("Special:", "Wikipedia:", "Main_Page", "Portal:", "File:",
@@ -253,9 +255,10 @@ def build_index(
     # bytes in memory ahead of an encoder that is thousands of images behind.
     partial = False
     try:
-        with ThreadPoolExecutor(max_workers=DOWNLOAD_WORKERS) as pool:
+        workers = download_workers(encoder, Config())
+        with ThreadPoolExecutor(max_workers=workers) as pool:
             for done, (ident, blob) in enumerate(
-                prefetch(pool, identities, grab, DOWNLOAD_WORKERS * 3), 1
+                prefetch(pool, identities, grab, workers * PREFETCH_FACTOR), 1
             ):
                 if done % 100 == 0:
                     say(f"  {done}/{len(identities)} · {len(kept)} usable faces")

@@ -52,11 +52,12 @@ from typing import Any
 import numpy as np
 
 from .concurrency import prefetch
-from .config import MODELS_DIR
+from .config import MODELS_DIR, Config
 from .evidence import sha256_hex
 from .face import decode_image, largest_face
 from .identify import Identity, IdentityIndex
 from .search.http import fetch_image, make_session
+from .search.matcher import PREFETCH_FACTOR, download_workers
 
 CALIBRATION_PATH = MODELS_DIR / "calibration.json"
 
@@ -66,7 +67,6 @@ PORTRAIT_LANGS = ("en", "es", "fr", "de", "ru", "ja", "pt", "it", "ar", "fa",
                   "id", "tr", "pl", "hi", "ta")
 
 HARVEST_WORKERS = 8
-DOWNLOAD_WORKERS = 8
 BATCH = 40
 
 # Above this, two "different" index identities are almost certainly the same
@@ -297,9 +297,12 @@ def encode_portraits(
     def grab(job: tuple[str, str]) -> bytes | None:
         return fetch_image(session, job[1], 30.0)
 
-    with ThreadPoolExecutor(max_workers=DOWNLOAD_WORKERS) as pool:
+    # Portrait downloads feeding one encoder, same shape as the search path,
+    # so the same rule for how many at once. See sigil/search/matcher.py.
+    workers = download_workers(encoder, Config())
+    with ThreadPoolExecutor(max_workers=workers) as pool:
         for done, ((qid, _url), blob) in enumerate(
-            prefetch(pool, jobs, grab, DOWNLOAD_WORKERS * 3), 1
+            prefetch(pool, jobs, grab, workers * PREFETCH_FACTOR), 1
         ):
             if done % 100 == 0:
                 kept = sum(len(v) for v in out.values())
