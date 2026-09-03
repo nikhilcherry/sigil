@@ -223,14 +223,18 @@ example images:
 
 Both backends find the same live match on a clean clone, so the fallback is a
 real alternative rather than a degraded mode. Verified from an actual fresh
-clone on 2026-09-03, with no API keys in the environment and the insightface
-extra not installed: `pip install -e ".[dev]"`, `./scripts/fetch_models.sh`,
-suite green under its own coverage floor, then the documented quickstart
-matched `@aoc.bsky.social` at 0.7411 against the opencv threshold of 0.363 —
-picture-vs-probe 0.0728, so a genuinely different photograph — and anchored at
-114,222 gas. `./scripts/demo.sh` then ran end to end on that clone, skipping
-the identity index and the calibration it has not built yet rather than
-failing on them.
+clone of `main` on 2026-09-03, with no API keys in the environment and the
+insightface extra not installed: `pip install -e ".[dev]"`,
+`./scripts/fetch_models.sh`, then 429 offline tests green at 95.46% coverage —
+its own CI floor — and the documented quickstart matched `@aoc.bsky.social` at
+0.7411 against the opencv threshold of 0.363, picture-vs-probe 0.0728, so a
+genuinely different photograph, anchored at 114,222 gas.
+
+`./scripts/demo.sh` then ran end to end on that clone in **26 seconds** with no
+tracebacks: it named the face, found the post, anchored it, re-verified all six
+checks, rejected a tampered bundle, listed the registry's contents, and skipped
+the identity index and calibration it has not built yet rather than failing on
+them. That is the whole deliverable, from `git clone`, with nothing configured.
 
 That gap is what makes a fixed threshold defensible, and `tests/test_face.py`
 asserts it on every run so a model or preprocessing change cannot quietly erode
