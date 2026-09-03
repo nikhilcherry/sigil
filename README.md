@@ -603,22 +603,35 @@ on yourself, on a consenting subject, or on a public figure for a demonstration.
   individual is not in it and will not be found. This is a genuine search over
   live data; it is not equivalent to PimEyes-style indexing of the open web, and
   it is not intended to be.
-- **Identification can be confidently wrong.** The index returns the nearest
-  known face, and "nearest" is not "correct". Lookalikes and poor-quality
-  portraits are the failure mode. Candidates below 0.45 cosine are rejected
-  rather than reported, and the runner-up scores are always shown so the margin
-  is visible.
-- **False positives are possible.** A cosine threshold is a decision boundary,
-  not proof of identity. Similarity is recorded on-chain precisely so a
-  downstream reader can apply their own bar. Twins, close relatives, and heavily
-  filtered photos are the known hard cases, and accuracy degrades with age gaps,
-  pose, occlusion, and demographic distribution — published face-recognition
-  benchmarks show materially different error rates across demographic groups,
-  and nothing here corrects for that.
+- **Identification can be confidently wrong, and now it is priced.** The index
+  returns the nearest known face, and "nearest" is not "correct". Lookalikes
+  and poor-quality portraits are the failure mode. Candidates below 0.45 cosine
+  are rejected rather than reported, and the runner-up scores are always shown
+  so the margin is visible — but the number that matters is **1.73%**:
+  measured leave-one-out over the real index, that is how often a face the
+  index does not contain gets a confident name anyway
+  ([§5](#5--calibration--what-the-threshold-actually-costs)). One in fifty-eight.
+  That is small enough for a demonstration and far too large to act on.
+- **False positives are possible, at a measured rate.** A cosine threshold is a
+  decision boundary, not proof of identity. At 0.380 the measured pair-level
+  false-accept rate is 2.836 × 10⁻⁵ and the true-accept rate 94.69%
+  ([§5](#5--calibration--what-the-threshold-actually-costs)); similarity is
+  recorded on-chain precisely so a downstream reader can apply their own bar.
+  Twins, close relatives, and heavily filtered photos are the known hard cases,
+  and accuracy degrades with age gaps, pose, occlusion, and demographic
+  distribution — published face-recognition benchmarks show materially
+  different error rates across demographic groups, and nothing here corrects
+  for that. **The calibration here does not correct for it either**: it is
+  measured over whoever happens to be well-viewed on Wikipedia, which is not a
+  balanced sample, so the aggregate rates above should not be read as holding
+  evenly across groups.
 - **The chain proves integrity, not truth.** Anchoring establishes that a
   bundle existed at a time and has not changed. It says nothing about whether
   the match was *correct*. A confidently wrong match, anchored, is a permanent
-  record of a confidently wrong match.
+  record of a confidently wrong match. `sigil verify` re-derives what it can —
+  the probe's embedding from its pixels, the source image's bytes, and the
+  identity-vs-provenance claim from the two images — but no amount of
+  re-derivation makes a face model right.
 - **No biometrics on chain — by design.** The registry stores a salted
   commitment to the probe, never an embedding or an image. Publishing a face
   vector to an append-only public ledger would be an irreversible biometric
