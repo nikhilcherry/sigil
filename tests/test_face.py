@@ -181,3 +181,74 @@ def test_a_gpu_that_loads_but_cannot_infer_falls_back_to_cpu(monkeypatch):
 
     assert attempts == ["CUDAExecutionProvider", "CPUExecutionProvider"]
     assert backend.provider == "CPUExecutionProvider"
+
+
+# ------------------------------- the defensive paths the docstrings promise
+
+
+def test_a_decode_that_raises_is_treated_as_unreadable(monkeypatch):
+    """The docstring's specific claim, which nothing was checking.
+
+    Candidate bytes come off the open internet, and cv2.imdecode raises on
+    some malformed input rather than returning None. Letting that escape would
+    end a whole search over one bad download from a stranger's CDN.
+    """
+    import cv2
+
+    from sigil.face import encoder as enc
+
+    def boom(*_a, **_kw):
+        raise cv2.error("unsupported or corrupt data")
+
+    monkeypatch.setattr(enc.cv2, "imdecode", boom)
+    assert enc.decode_image(b"\x89PNG\r\n\x1a\n truncated") is None
+
+
+def test_a_decode_that_yields_an_empty_array_is_unreadable_too(monkeypatch):
+    import numpy as np
+
+    from sigil.face import encoder as enc
+
+    monkeypatch.setattr(enc.cv2, "imdecode",
+                        lambda *a, **k: np.empty((0, 0, 3), dtype=np.uint8))
+    assert enc.decode_image(b"something") is None
+
+
+def test_asking_for_insightface_by_name_fails_loudly(monkeypatch):
+    """`auto` may fall back silently; an explicit choice may not.
+
+    Someone who passed --backend insightface and quietly got opencv would
+    compare against the wrong threshold and never know.
+    """
+    import builtins
+
+    from sigil.face import load_encoder
+
+    real_import = builtins.__import__
+
+    def no_insightface(name, *args, **kw):
+        if "insight" in name:
+            raise ImportError("No module named 'insightface'")
+        return real_import(name, *args, **kw)
+
+    monkeypatch.setattr(builtins, "__import__", no_insightface)
+
+    with pytest.raises(RuntimeError, match="insightface backend unavailable"):
+        load_encoder("insightface")
+
+
+def test_auto_falls_back_to_opencv_without_complaining(monkeypatch):
+    """The contrast that makes the explicit failure meaningful."""
+    import builtins
+
+    from sigil.face import load_encoder
+
+    real_import = builtins.__import__
+
+    def no_insightface(name, *args, **kw):
+        if "insight" in name:
+            raise ImportError("No module named 'insightface'")
+        return real_import(name, *args, **kw)
+
+    monkeypatch.setattr(builtins, "__import__", no_insightface)
+    assert load_encoder("auto").name == "opencv"
