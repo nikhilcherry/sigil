@@ -51,7 +51,8 @@ class SerpApiLensProvider:
         self.trace.record("google_lens", {"url": self.probe_url}, len(matches))
 
         for m in matches:
-            image_url = m.get("image") or m.get("thumbnail")
+            thumbnail = m.get("thumbnail") or ""
+            image_url = m.get("image") or thumbnail
             link = m.get("link") or ""
             if not image_url or not link:
                 continue
@@ -59,6 +60,10 @@ class SerpApiLensProvider:
                 platform=(m.get("source") or urlparse(link).netloc or "web").lower(),
                 source_kind=self.kind,
                 image_url=image_url,
+                # Lens hosts its own copy of the thumbnail, which is served
+                # when the original will not be. Recorded rather than used:
+                # the full-size URL is still tried first every time.
+                thumbnail_url=thumbnail if thumbnail != image_url else "",
                 post_url=link,
                 post_uri=link,
                 author_handle=m.get("source") or urlparse(link).netloc,

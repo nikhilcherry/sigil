@@ -60,13 +60,20 @@ def test_at_uri_converts_to_a_browsable_url():
 
 
 def test_images_are_extracted_from_a_post_embed(bluesky_post_fixture):
-    urls = BlueskyProvider._images_from_post(bluesky_post_fixture)
-    assert urls == ["https://cdn/full.jpg"]
+    """Both URLs for the picture, since the CDN can serve them independently."""
+    pairs = BlueskyProvider._images_from_post(bluesky_post_fixture)
+    assert pairs == [("https://cdn/full.jpg", "https://cdn/thumb.jpg")]
 
 
 def test_images_are_extracted_from_record_with_media():
     post = {"embed": {"media": {"images": [{"fullsize": "https://cdn/m.jpg"}]}}}
-    assert BlueskyProvider._images_from_post(post) == ["https://cdn/m.jpg"]
+    assert BlueskyProvider._images_from_post(post) == [("https://cdn/m.jpg", "")]
+
+
+def test_a_post_with_only_a_thumb_uses_it_as_the_image_not_as_a_fallback():
+    """Falling back to the URL already being fetched would only fetch it twice."""
+    post = {"embed": {"images": [{"thumb": "https://cdn/t.jpg"}]}}
+    assert BlueskyProvider._images_from_post(post) == [("https://cdn/t.jpg", "")]
 
 
 def test_post_without_images_yields_nothing():
@@ -936,3 +943,97 @@ def test_a_provider_stamps_its_own_kind_onto_every_candidate(monkeypatch):
 
     assert cands, "no candidates to check"
     assert {c.source_kind for c in cands} == {provider.kind} == {"social"}
+
+
+# ----------------------------------------------- thumbnail fallback and upscaling
+
+
+def _thumb_candidate(image_url, thumbnail_url):
+    c = _candidate(image_url)
+    c.thumbnail_url = thumbnail_url
+    return c
+
+
+def _fetch_log(monkeypatch, responses):
+    """Patch fetch_image to answer from `responses`, recording what was asked."""
+    import sigil.search.matcher as m
+
+    asked = []
+
+    def fake(session, url, timeout):
+        asked.append(url)
+        return responses.get(url)
+
+    monkeypatch.setattr(m, "fetch_image", fake)
+    monkeypatch.setattr(m, "score_image", lambda e, p, b, fp=None: (0.9, 1, [], 0.0))
+    return asked
+
+
+def test_a_dead_full_size_url_falls_back_to_the_arm_s_thumbnail(monkeypatch):
+    """Dropping a real match over a stale CDN link is the worse error."""
+    asked = _fetch_log(monkeypatch, {"https://cdn/t.jpg": b"bytes"})
+    provider = FakeProvider([_thumb_candidate("https://cdn/full.jpg", "https://cdn/t.jpg")])
+
+    result = search_and_match(FakeEncoder({}), _face([1, 0, 0]), [provider],
+                              "q", 0.38, Config())
+
+    assert asked == ["https://cdn/full.jpg", "https://cdn/t.jpg"]
+    assert result.found
+    assert result.thumbnail_fallbacks == 1
+
+
+def test_the_thumbnail_is_never_fetched_when_the_full_size_works(monkeypatch):
+    """It is a worse encode of the same picture - a fallback, not a preference."""
+    asked = _fetch_log(monkeypatch, {"https://cdn/full.jpg": b"bytes"})
+    provider = FakeProvider([_thumb_candidate("https://cdn/full.jpg", "https://cdn/t.jpg")])
+
+    result = search_and_match(FakeEncoder({}), _face([1, 0, 0]), [provider],
+                              "q", 0.38, Config())
+
+    assert asked == ["https://cdn/full.jpg"]
+    assert result.thumbnail_fallbacks == 0
+
+
+def test_a_thumbnail_identical_to_the_image_url_is_not_fetched_twice(monkeypatch):
+    asked = _fetch_log(monkeypatch, {})
+    provider = FakeProvider([_thumb_candidate("https://cdn/a.jpg", "https://cdn/a.jpg")])
+
+    search_and_match(FakeEncoder({}), _face([1, 0, 0]), [provider], "q", 0.38, Config())
+
+    assert asked == ["https://cdn/a.jpg"]
+
+
+def test_small_images_are_enlarged_and_large_ones_are_left_alone():
+    from sigil.search.matcher import DETECT_MIN_DIM, upscale_for_detection
+
+    small = np.zeros((60, 120, 3), dtype=np.uint8)
+    out, scale = upscale_for_detection(small)
+    assert max(out.shape[:2]) == DETECT_MIN_DIM
+    assert scale == pytest.approx(DETECT_MIN_DIM / 120)
+
+    # At or above the floor, untouched - resampling an image that already has
+    # the pixels measurably loses ground. Identity, not merely same-shaped.
+    big = np.zeros((400, 700, 3), dtype=np.uint8)
+    out, scale = upscale_for_detection(big)
+    assert out is big and scale == 1.0
+
+
+def test_a_bounding_box_from_an_enlarged_image_is_reported_in_original_coordinates():
+    """Otherwise the box the UI draws sits somewhere off the side of the picture."""
+    import cv2
+
+    import sigil.search.matcher as m
+
+    img = np.zeros((80, 160, 3), dtype=np.uint8)
+    ok, buf = cv2.imencode(".png", img)
+    assert ok
+
+    class BoxEncoder:
+        def detect_and_encode(self, image_bgr):
+            # The detector sees the enlarged copy: 160 wide becomes 320.
+            assert image_bgr.shape[1] == 320
+            return [Face(embedding=np.asarray([1.0, 0.0, 0.0], dtype=np.float32),
+                         bbox=[100, 40, 200, 140], det_score=0.9)]
+
+    _, _, bbox, _ = m.score_image(BoxEncoder(), _face([1, 0, 0]), buf.tobytes())
+    assert bbox == [50, 20, 100, 70]

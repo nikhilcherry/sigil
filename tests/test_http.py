@@ -252,3 +252,40 @@ def test_a_redirect_into_a_private_address_is_refused(monkeypatch):
             return Redirected()
 
     assert h.fetch_image(Session(), "https://cdn.example/img.jpg", 5.0) is None
+
+
+def test_the_session_says_what_it_will_accept():
+    """A client offering no Accept at all gets a 406 or an HTML page from some CDNs.
+
+    An HTML error page then fails the Content-Type check in fetch_image and is
+    indistinguishable from "that candidate had no image", so the header is what
+    keeps a fetch failure legible.
+    """
+    from sigil.search.http import make_session
+
+    s = make_session()
+    assert s.headers["Accept"].startswith("image/")
+    assert "en" in s.headers["Accept-Language"]
+
+
+def test_the_shipped_user_agent_identifies_itself():
+    """Presenting a browser's UA is a decision to make, not a default to ship."""
+    from sigil.search.http import DEFAULT_USER_AGENT, USER_AGENT
+
+    assert USER_AGENT == DEFAULT_USER_AGENT
+    assert USER_AGENT.startswith("sigil/")
+    assert "Mozilla" not in USER_AGENT
+
+
+def test_the_user_agent_is_overridable_from_the_environment(monkeypatch):
+    import importlib
+
+    import sigil.search.http as http
+
+    monkeypatch.setenv("SIGIL_USER_AGENT", "something-else/1.0")
+    reloaded = importlib.reload(http)
+    try:
+        assert reloaded.make_session().headers["User-Agent"] == "something-else/1.0"
+    finally:
+        monkeypatch.delenv("SIGIL_USER_AGENT", raising=False)
+        importlib.reload(http)

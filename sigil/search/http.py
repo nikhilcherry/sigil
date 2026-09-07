@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+import os
 import socket
 from urllib.parse import urlparse
 
@@ -12,13 +13,33 @@ from urllib3.util.retry import Retry
 
 from .. import __version__
 
-USER_AGENT = f"sigil/{__version__} (+https://github.com/nikhilcherry/sigil)"
+DEFAULT_USER_AGENT = f"sigil/{__version__} (+https://github.com/nikhilcherry/sigil)"
+
+# Overridable, and deliberately not overridden by default. Some CDNs serve
+# images only to something that looks like a browser, and the fix people reach
+# for is to send Chrome's UA string - which is a decision about whether to lie
+# to a host that has said what it wants, not a technical detail, so it is the
+# operator's to make rather than this file's. What ships identifies itself, and
+# SIGIL_USER_AGENT is there for someone who has decided otherwise.
+USER_AGENT = os.getenv("SIGIL_USER_AGENT", "").strip() or DEFAULT_USER_AGENT
+
+# Sent on every request. Not cosmetic: a client offering no Accept at all is
+# unusual enough that some image CDNs answer it with a 406 or an HTML error
+# page, and an HTML error page fails the Content-Type check in fetch_image and
+# is then indistinguishable from "that candidate had no image". These headers
+# say truthfully what this client wants and will read.
+DEFAULT_HEADERS = {
+    "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
 MAX_IMAGE_BYTES = 12 * 1024 * 1024
 
 
 def make_session() -> requests.Session:
     s = requests.Session()
     s.headers["User-Agent"] = USER_AGENT
+    s.headers.update(DEFAULT_HEADERS)
     retry = Retry(
         total=3,
         backoff_factor=0.5,
