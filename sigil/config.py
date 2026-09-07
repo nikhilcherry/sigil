@@ -89,6 +89,14 @@ class Config:
         default_factory=lambda: os.getenv("SIGIL_ALLOW_UNSAFE", "").strip().lower()
         in ("1", "true", "yes", "on")
     )
+    # Upload the probe to a temporary public host so the Lens arm can be asked
+    # about a local file at all. Off by default because of what it is - putting
+    # a photograph of somebody's face on a public URL - rather than because it
+    # is slow. See search/publish.py.
+    publish_probe: bool = field(
+        default_factory=lambda: os.getenv("SIGIL_PUBLISH_PROBE", "").strip().lower()
+        in ("1", "true", "yes", "on")
+    )
     bluesky_handle: str | None = field(default_factory=lambda: os.getenv("BLUESKY_HANDLE"))
     bluesky_app_password: str | None = field(
         default_factory=lambda: os.getenv("BLUESKY_APP_PASSWORD")

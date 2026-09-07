@@ -99,17 +99,21 @@ def cli() -> None:
 @click.option("--no-anchor", is_flag=True, help="Stop after the match; write no record.")
 @click.option("--allow-unsafe", is_flag=True, default=False,
               help="Examine candidates the safety screen refuses. See search/safety.py.")
+@click.option("--publish-probe", is_flag=True, default=False,
+              help="Upload the probe to a temporary public host so Google Lens "
+                   "can be asked about a local file. Publishes a face; opt-in.")
 @click.option("-o", "--out", type=click.Path(path_type=Path), default=DEFAULT_EVIDENCE,
               show_default=True, help="Where to write the evidence bundle.")
 def run(image, query, backend, threshold, max_images, chain_backend, no_anchor,
-        allow_unsafe, out):
+        allow_unsafe, publish_probe, out):
     """Run the whole pipeline on IMAGE (a file path or an https URL)."""
     # `or None` so the flag can only ever turn the screen off: _cfg skips None
     # overrides, which leaves SIGIL_ALLOW_UNSAFE in charge when the flag is
     # absent. Passing False unconditionally would make an unset flag silently
     # override an operator's environment.
     cfg = _cfg(face_backend=backend, threshold=threshold, max_images=max_images,
-               chain_backend=chain_backend, allow_unsafe=allow_unsafe or None)
+               chain_backend=chain_backend, allow_unsafe=allow_unsafe or None,
+               publish_probe=publish_probe or None)
     total = 3 if no_anchor else 5
 
     shown = repr(query) if query else "[dim]from face[/dim]"
@@ -127,6 +131,18 @@ def run(image, query, backend, threshold, max_images, chain_backend, no_anchor,
             elif event.get("type") == "query" and event.get("derived"):
                 progress.console.print(
                     f"[dim]identified as[/dim] [bold cyan]{event['query']}[/bold cyan]"
+                )
+            elif event.get("type") == "multiface":
+                progress.console.print(
+                    f"[yellow]warning[/yellow] [dim]the probe contains[/dim] "
+                    f"{event['faces']} [dim]faces; the largest was used. "
+                    f"Crop the image to search for one of the others.[/dim]"
+                )
+            elif event.get("type") == "published" and event.get("url"):
+                progress.console.print(
+                    f"[yellow]published[/yellow] [dim]the probe to a temporary "
+                    f"public URL so Google Lens can be asked about it; it "
+                    f"expires in {event['expires']}[/dim]"
                 )
             if event.get("type") == "progress":
                 progress.update(
@@ -203,7 +219,7 @@ def search(image, query, backend, threshold, max_images, allow_unsafe, out):
     ctx = click.get_current_context()
     ctx.invoke(run, image=image, query=query, backend=backend, threshold=threshold,
                max_images=max_images, chain_backend=None, no_anchor=True,
-               allow_unsafe=allow_unsafe, out=out)
+               allow_unsafe=allow_unsafe, publish_probe=False, out=out)
 
 
 # ------------------------------------------------------------------------ anchor

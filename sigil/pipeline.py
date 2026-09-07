@@ -18,6 +18,7 @@ from .search import (
     GoogleVisionProvider,
     SearchProvider,
     SerpApiLensProvider,
+    publish,
 )
 from .search.matcher import MatchResult, search_and_match
 
@@ -192,6 +193,13 @@ def run_pipeline(
         emit({"type": "query", "query": query, "derived": False, "alternatives": []})
 
     emit({"type": "stage", "stage": "search", "status": "start"})
+    # A local file cannot be handed to Lens, which matches on a URL. Publishing
+    # it to a temporary host closes that, and is off unless asked for: it puts
+    # a photograph of the subject's face on a public URL, which is a disclosure
+    # to make deliberately rather than because a key was in the environment.
+    if probe_url is None and publish.enabled_for(cfg):
+        probe_url = publish.publish_probe(image_bytes, cfg)
+        emit({"type": "published", "url": probe_url, "expires": publish.EXPIRY})
     providers = build_providers(cfg, probe_url, image_bytes)
     emit({"type": "providers", "providers": [p.name for p in providers]})
     match = search_and_match(
@@ -215,8 +223,12 @@ def run_pipeline(
     if not match.found:
         emit({
             "type": "nomatch",
+            # Four situations wear this label and they have four different
+            # fixes - see MatchResult.outcome.
+            "outcome": match.outcome,
             "best": round(match.ranked[0].similarity, 4) if match.ranked else 0.0,
             "examined": match.images_examined,
+            "refused": match.blocked_unsafe,
             "threshold": threshold,
         })
         emit({"type": "done", "found": False})

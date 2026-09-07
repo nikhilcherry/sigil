@@ -107,6 +107,32 @@ class MatchResult:
     def found(self) -> bool:
         return self.best is not None
 
+    @property
+    def outcome(self) -> str:
+        """One word for how the search ended, for a caller that has to branch.
+
+        "No match" is four different situations with four different fixes, and
+        collapsing them costs the operator the one piece of information they
+        need. A query that returned nothing wants different search terms; a
+        run where every image had no face in it wants a different arm; a run
+        where everything was refused wants nothing at all, because refusing was
+        correct; and a best candidate at 0.31 against a 0.38 threshold is the
+        only one of the four where the tool worked exactly as intended and the
+        answer is "that is not the same person".
+
+        The prose panels say this too. This exists so the web UI and any
+        program driving the pipeline do not have to parse the prose.
+        """
+        if self.best is not None:
+            return "MATCH"
+        if self.images_examined == 0:
+            if self.blocked_unsafe:
+                return "ALL_CANDIDATES_REFUSED"
+            return "NO_CANDIDATES"
+        if self.images_with_faces == 0:
+            return "NO_FACES_IN_CANDIDATES"
+        return "BELOW_THRESHOLD"
+
 
 def _dedup(it: Iterable[Candidate]) -> Iterator[Candidate]:
     seen: set[str] = set()

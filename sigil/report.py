@@ -252,6 +252,8 @@ def no_match_panel(result, threshold: float) -> None:
     )
     console.print(
         Panel(
+            f"[dim]outcome[/dim] [bold]{getattr(result, 'outcome', 'BELOW_THRESHOLD')}"
+            f"[/bold]\n"
             f"No candidate cleared the {threshold:.3f} threshold.\n"
             f"Best similarity seen: [yellow]{top:.4f}[/yellow] across "
             f"{result.images_examined} images.\n"

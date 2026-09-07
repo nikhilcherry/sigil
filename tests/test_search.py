@@ -1037,3 +1037,40 @@ def test_a_bounding_box_from_an_enlarged_image_is_reported_in_original_coordinat
 
     _, _, bbox, _ = m.score_image(BoxEncoder(), _face([1, 0, 0]), buf.tobytes())
     assert bbox == [50, 20, 100, 70]
+
+
+# ------------------------------------------------------------------- outcomes
+
+
+@pytest.mark.parametrize("kwargs,expected", [
+    ({}, "NO_CANDIDATES"),
+    ({"blocked_unsafe": 3}, "ALL_CANDIDATES_REFUSED"),
+    ({"images_examined": 5}, "NO_FACES_IN_CANDIDATES"),
+    ({"images_examined": 5, "images_with_faces": 2}, "BELOW_THRESHOLD"),
+])
+def test_no_match_is_four_situations_with_four_different_fixes(kwargs, expected):
+    """Collapsing them costs the operator the one thing they need to know."""
+    from sigil.search.matcher import MatchResult
+
+    assert MatchResult(best=None, **kwargs).outcome == expected
+
+
+def test_a_found_match_reports_match(monkeypatch):
+    from sigil.search.matcher import MatchResult, ScoredCandidate
+
+    best = ScoredCandidate(candidate=_candidate("a"), similarity=0.9,
+                           image_sha256="x", faces_in_image=1, matched_bbox=[])
+    assert MatchResult(best=best, images_examined=1).outcome == "MATCH"
+
+
+def test_the_outcome_travels_with_the_nomatch_event(monkeypatch, cfg):
+    import sigil.pipeline as pipeline
+    from tests.conftest import EXAMPLE_PROBE
+
+    monkeypatch.setattr(pipeline, "build_providers", lambda *a, **k: [])
+    events = []
+    pipeline.run_pipeline(str(EXAMPLE_PROBE), "someone", cfg, do_anchor=False,
+                          on_event=events.append)
+
+    nomatch = [e for e in events if e["type"] == "nomatch"]
+    assert nomatch and nomatch[0]["outcome"] == "NO_CANDIDATES"
