@@ -80,6 +80,15 @@ class Config:
     download_workers: int = field(
         default_factory=lambda: _env_int("SIGIL_DOWNLOAD_WORKERS", 0)
     )
+    # Look at candidates the safety screen refuses. Off by default, and the
+    # default is the interesting half: a cleared candidate becomes a citation
+    # in a bundle that is hashed onto an append-only ledger, so the cost of
+    # anchoring an adult-scraper or leak-site URL is permanent and cannot be
+    # withdrawn. See search/safety.py.
+    allow_unsafe: bool = field(
+        default_factory=lambda: os.getenv("SIGIL_ALLOW_UNSAFE", "").strip().lower()
+        in ("1", "true", "yes", "on")
+    )
     bluesky_handle: str | None = field(default_factory=lambda: os.getenv("BLUESKY_HANDLE"))
     bluesky_app_password: str | None = field(
         default_factory=lambda: os.getenv("BLUESKY_APP_PASSWORD")

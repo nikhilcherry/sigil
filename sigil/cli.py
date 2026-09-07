@@ -97,12 +97,19 @@ def cli() -> None:
 @click.option("--chain", "chain_backend", type=click.Choice(["local", "rpc"]), default=None,
               help="local = persistent in-process EVM; rpc = a real node.")
 @click.option("--no-anchor", is_flag=True, help="Stop after the match; write no record.")
+@click.option("--allow-unsafe", is_flag=True, default=False,
+              help="Examine candidates the safety screen refuses. See search/safety.py.")
 @click.option("-o", "--out", type=click.Path(path_type=Path), default=DEFAULT_EVIDENCE,
               show_default=True, help="Where to write the evidence bundle.")
-def run(image, query, backend, threshold, max_images, chain_backend, no_anchor, out):
+def run(image, query, backend, threshold, max_images, chain_backend, no_anchor,
+        allow_unsafe, out):
     """Run the whole pipeline on IMAGE (a file path or an https URL)."""
+    # `or None` so the flag can only ever turn the screen off: _cfg skips None
+    # overrides, which leaves SIGIL_ALLOW_UNSAFE in charge when the flag is
+    # absent. Passing False unconditionally would make an unset flag silently
+    # override an operator's environment.
     cfg = _cfg(face_backend=backend, threshold=threshold, max_images=max_images,
-               chain_backend=chain_backend)
+               chain_backend=chain_backend, allow_unsafe=allow_unsafe or None)
     total = 3 if no_anchor else 5
 
     shown = repr(query) if query else "[dim]from face[/dim]"
@@ -189,12 +196,14 @@ def scan(image, backend):
 @click.option("--backend", type=click.Choice(["auto", "insightface", "opencv"]), default=None)
 @click.option("--threshold", type=float, default=None)
 @click.option("--max-images", type=int, default=None)
+@click.option("--allow-unsafe", is_flag=True, default=False)
 @click.option("-o", "--out", type=click.Path(path_type=Path), default=DEFAULT_EVIDENCE)
-def search(image, query, backend, threshold, max_images, out):
+def search(image, query, backend, threshold, max_images, allow_unsafe, out):
     """Stages 1-3: scan, search and match, without touching a chain."""
     ctx = click.get_current_context()
     ctx.invoke(run, image=image, query=query, backend=backend, threshold=threshold,
-               max_images=max_images, chain_backend=None, no_anchor=True, out=out)
+               max_images=max_images, chain_backend=None, no_anchor=True,
+               allow_unsafe=allow_unsafe, out=out)
 
 
 # ------------------------------------------------------------------------ anchor

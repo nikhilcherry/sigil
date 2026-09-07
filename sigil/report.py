@@ -65,6 +65,14 @@ def search_panel(result, threshold: float, providers: list[str]) -> None:
     t.add_row("faces compared", str(result.faces_examined))
     if getattr(result, "inference_reused", 0):
         t.add_row("duplicate images", f"{result.inference_reused} (score reused)")
+    # Only when it happened. A permanent "refused 0" row would train a reader
+    # to skip the line that matters on the run where it is not zero.
+    if getattr(result, "blocked_unsafe", 0):
+        by = getattr(result, "blocked_by_category", {}) or {}
+        detail = ", ".join(f"{k} {v}" for k, v in sorted(by.items()))
+        t.add_row("refused before download",
+                  f"[yellow]{result.blocked_unsafe}[/yellow]"
+                  + (f" [dim]({q(detail)})[/dim]" if detail else ""))
     t.add_row("threshold", f"{threshold:.3f} cosine")
     calls = sum(len(p["calls"]) for p in result.trace)
     t.add_row("live API calls", str(calls))
@@ -222,11 +230,24 @@ def _measured_rates(evidence):
 
 def no_match_panel(result, threshold: float) -> None:
     top = result.ranked[0].similarity if result.ranked else 0.0
+    # "Nothing matched" and "everything found was refused before it could be
+    # matched" are different findings and the second one has a different fix,
+    # so the panel says which one happened rather than leaving the operator to
+    # widen a query that was never the problem.
+    blocked = getattr(result, "blocked_unsafe", 0)
+    refused = (
+        f"\n[yellow]{blocked}[/yellow] further candidates were refused before "
+        "download by the safety screen"
+        + (" - this run examined none of them.\n" if not result.images_examined
+           else ".\n")
+        if blocked else ""
+    )
     console.print(
         Panel(
             f"No candidate cleared the {threshold:.3f} threshold.\n"
             f"Best similarity seen: [yellow]{top:.4f}[/yellow] across "
-            f"{result.images_examined} images.\n\n"
+            f"{result.images_examined} images.\n"
+            f"{refused}\n"
             "[dim]Nothing is anchored when nothing matched - that is the point. "
             "Try a broader --query, raise --max-images, or use a probe photo of "
             "someone with a public presence on the platform.[/dim]",

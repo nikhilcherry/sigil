@@ -23,6 +23,7 @@ from ..face import Face, cosine, decode_image
 from ..provenance import IDENTITY, claim_for, fingerprint, photo_similarity
 from .base import Candidate, SearchProvider
 from .http import fetch_image, make_session
+from .safety import is_safe
 
 # How many candidate images to download at once. Two values, because the right
 # one depends on which half of the run is the slow half.
@@ -86,6 +87,12 @@ class MatchResult:
     images_with_faces: int = 0
     faces_examined: int = 0
     inference_reused: int = 0
+    # Candidates refused before download - see search/safety.py. Counted rather
+    # than dropped silently: "nothing was found" and "everything found was a
+    # scraper site" are different answers, and only one of them means the
+    # search failed.
+    blocked_unsafe: int = 0
+    blocked_by_category: dict[str, int] = field(default_factory=dict)
 
     @property
     def found(self) -> bool:
@@ -99,6 +106,48 @@ def _dedup(it: Iterable[Candidate]) -> Iterator[Candidate]:
             continue
         seen.add(c.image_url)
         yield c
+
+
+def screen(
+    it: Iterable[Candidate],
+    result: MatchResult,
+    allow_unsafe: bool = False,
+    on_event: Callable[[dict[str, Any]], None] | None = None,
+) -> Iterator[Candidate]:
+    """Drop candidates this tool refuses to download or cite.
+
+    What gets refused and why is `search/safety.py`; this is only where it sits
+    in the stream, and where it sits is the part that is easy to get wrong.
+
+    Ahead of the `max_images` truncation, deliberately. A face query against an
+    open-web index routinely returns a page of adult scraper results, and
+    screening *after* the budget would let those consume the slots - so the run
+    would examine forty things it refused to look at and report that it found
+    nothing, while the arm that had a real answer never advanced. The same
+    reasoning as `interleave`: a budget spent on candidates that cannot
+    contribute is a search that claims coverage it does not have.
+
+    Ahead of the *download*, equally deliberately. The alternative is to fetch
+    the bytes and discard them, which means this process has requested the
+    image from that host, and on some of these hosts that request is itself the
+    thing worth not doing.
+
+    The event carries the category and the running count, never the URL or the
+    host. A blocked candidate that gets echoed to the terminal or the UI has
+    defeated most of the point of blocking it.
+    """
+    for c in it:
+        verdict = is_safe(c)
+        if allow_unsafe or verdict.allowed:
+            yield c
+            continue
+        result.blocked_unsafe += 1
+        result.blocked_by_category[verdict.category] = (
+            result.blocked_by_category.get(verdict.category, 0) + 1
+        )
+        if on_event:
+            on_event({"type": "blocked", "category": verdict.category,
+                      "total": result.blocked_unsafe})
 
 
 def interleave(
@@ -214,6 +263,7 @@ def search_and_match(
     stream = _dedup(interleave(
         [(p.name, p.candidates(query)) for p in providers], on_error=arm_failed
     ))
+    stream = screen(stream, result, getattr(cfg, "allow_unsafe", False), on_event)
     stream = itertools.islice(stream, cfg.max_images)
 
     def fetch(c: Candidate) -> bytes | None:
@@ -335,6 +385,20 @@ def search_and_match(
     result.trace = [
         {"provider": p.name, "calls": p.trace.calls} for p in providers if hasattr(p, "trace")
     ]
+    # The screen goes into the trace for the same reason the providers do: the
+    # bundle should record what the run actually did, and "23 candidates were
+    # refused before download" is part of that. Counts by category only - the
+    # hosts themselves must not be written into a bundle that gets hashed onto
+    # a public chain.
+    if result.blocked_unsafe:
+        result.trace.append({
+            "provider": "safety",
+            "calls": [{
+                "endpoint": "screen",
+                "params": {"categories": dict(sorted(result.blocked_by_category.items()))},
+                "results": result.blocked_unsafe,
+            }],
+        })
     return result
 
 
