@@ -125,13 +125,13 @@ def _tokens(text: str) -> set[str]:
 
 
 def _subreddit_blocked(url: str) -> bool:
+    # `registrable_host` has already survived the parse, so a second one here
+    # cannot fail where the first did not - a try/except around it would be a
+    # branch no input can reach, which is worse than no branch at all.
     host = registrable_host(url)
     if host != "reddit.com" and not host.endswith(".reddit.com"):
         return False
-    try:
-        path = urlparse(url).path
-    except ValueError:
-        return False
+    path = urlparse(url).path
     return any(m.group(1).lower() in BLOCKED_SUBREDDITS
                for m in _SUBREDDIT.finditer(path))
 

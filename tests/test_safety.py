@@ -228,3 +228,10 @@ def test_no_safety_entry_in_the_trace_when_nothing_was_refused(monkeypatch):
                                      image_url="https://x/2.jpg")])
     result = _search([provider], Config(), monkeypatch)
     assert all(t["provider"] != "safety" for t in result.trace)
+
+
+def test_a_reddit_url_whose_path_will_not_parse_is_allowed_rather_than_crashing():
+    """Malformed input from a provider must not end a run."""
+    from sigil.search.safety import _subreddit_blocked
+
+    assert _subreddit_blocked("https://reddit.com/\udcff/r/gonewild") in (True, False)

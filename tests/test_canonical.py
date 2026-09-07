@@ -130,3 +130,23 @@ def test_normalisation_survives_a_round_trip_through_json():
     ev = _bundle("https://bsky.app/profile/who/post/3abc?utm_source=x")
     back = Evidence.from_dict(json.loads(ev.canonical_json()))
     assert back.canonical_json() == ev.canonical_json()
+
+
+# --------------------------------------------------- the awkward hosts and ports
+
+
+def test_an_ipv6_literal_keeps_its_brackets():
+    """urlsplit hands back the host without them; putting it back is on us."""
+    assert normalize_url("https://[2001:db8::1]/a") == "https://[2001:db8::1]/a"
+    assert normalize_url("https://[2001:db8::1]:8443/a") == "https://[2001:db8::1]:8443/a"
+
+
+def test_a_host_that_cannot_be_punycoded_is_left_as_it_is():
+    """A URL this cannot canonicalise is still a URL that has to survive it."""
+    weird = "https://" + "x" * 300 + ".example/a"
+    assert normalize_url(weird) == weird
+
+
+def test_a_nonsense_port_does_not_raise():
+    """urlsplit defers the parse, so `.port` is where the ValueError lands."""
+    assert isinstance(normalize_url("https://example.com:notaport/a"), str)

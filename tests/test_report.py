@@ -443,3 +443,68 @@ def test_no_third_party_string_can_style_itself_in_the_match_panel(evidence, wid
         f"{seen - bracketed} of {seen} payload occurrences were interpreted "
         "as markup rather than quoted"
     )
+
+
+# ------------------------------------------------- the rows that only sometimes appear
+
+
+def test_the_face_count_appears_only_when_there_was_a_choice_to_make(captured,
+                                                                     probe_ref):
+    """A row that says "1" on every run stops being read before the run it matters."""
+    report.probe_panel(probe_ref, "probe.jpg")
+    assert "faces in image" not in captured.export_text()
+
+    probe_ref.faces_in_image = 4
+    report.probe_panel(probe_ref, "probe.jpg")
+    text = captured.export_text()
+    assert "faces in image" in text and "4" in text
+    assert "largest was used" in text
+
+
+def test_the_refused_count_appears_only_when_something_was_refused(captured):
+    result = MatchResult(best=None, images_examined=3)
+    report.search_panel(result, 0.38, ["bluesky"])
+    assert "refused" not in captured.export_text()
+
+    result.blocked_unsafe = 7
+    result.blocked_by_category = {"host": 5, "handle": 2}
+    report.search_panel(result, 0.38, ["bluesky"])
+    text = captured.export_text()
+    assert "refused before download" in text
+    assert "7" in text and "handle 2" in text and "host 5" in text
+
+
+def test_the_no_match_panel_names_the_outcome_and_the_refusals(captured):
+    result = MatchResult(best=None, blocked_unsafe=4)
+    report.no_match_panel(result, 0.38)
+    text = captured.export_text()
+    assert "ALL_CANDIDATES_REFUSED" in text
+    assert "4" in text and "refused before download" in text
+
+
+def test_the_verification_receipt_panel_renders(captured):
+    report.verification_receipt_panel({
+        "evidence_hash": "0x" + "ab" * 32,
+        "anchored": True,
+        "tx_hash": "0x" + "cd" * 32,
+        "block_number": 7,
+        "gas_used": 28_412,
+        "explorer": "https://amoy.polygonscan.com/tx/0xcd",
+    })
+    text = captured.export_text()
+    assert "Check recorded on chain" in text
+    assert "28,412" in text
+    assert "amoy.polygonscan.com" in text
+    # The wording must never borrow the verification panel's: this receipt says
+    # a check happened, not that the bundle is sound.
+    assert "not that the bundle is sound" in text
+
+
+def test_the_receipt_says_plainly_when_the_registry_did_not_hold_the_hash(captured):
+    report.verification_receipt_panel({
+        "evidence_hash": "0x" + "ab" * 32, "anchored": False,
+        "tx_hash": "0x" + "cd" * 32, "block_number": 2, "gas_used": 25_000,
+        "explorer": None,
+    })
+    text = captured.export_text()
+    assert "registry held it" in text and "no" in text
