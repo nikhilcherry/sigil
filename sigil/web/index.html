@@ -285,6 +285,10 @@ footer{margin-top:34px;padding-top:16px;border-top:1px solid var(--rule);color:v
         <div><b id="m-faces">0</b><i>with a face</i></div>
         <div><b id="m-top">0.000</b><i>best score</i></div>
         <div><b id="m-calls">0</b><i>api calls</i></div>
+        <!-- Hidden until it is not zero: a permanent "refused 0" is a tile a
+             reader learns to skip, which is the state you least want it in on
+             the run where it says 23. -->
+        <div id="refused-tile" class="hide"><b id="m-refused">0</b><i>refused</i></div>
       </div>
       <div id="sheet" class="sheet"></div>
       <div id="sheet-empty" class="empty">
@@ -416,7 +420,8 @@ $("run").onclick = async () => {
   $("sheet").innerHTML = ""; $("sheet-empty").classList.remove("hide");
   ["matchpanel","chainpanel","verifypanel","probepanel","idpanel"].forEach(i => $(i).classList.add("hide"));
   $("errbox").innerHTML = "";
-  ["m-fetched","m-faces","m-calls"].forEach(i => $(i).textContent = "0");
+  ["m-fetched","m-faces","m-calls","m-refused"].forEach(i => $(i).textContent = "0");
+  blocked = 0; $("refused-tile").classList.add("hide");
   $("m-top").textContent = "0.000";
   $("query").style.color = "";
   resetStages();
@@ -514,6 +519,9 @@ function handle(e){
       $("m-fetched").textContent = e.examined;
       break;
 
+    case "multiface":   multiFace(e); break;
+    case "blocked":     blocked += 1; showRefused(e); break;
+    case "published":   published(e); break;
     case "provider_failed": providerFailed(e); break;
     case "match":       showMatch(e); break;
     case "nomatch":     showNoMatch(e); break;
@@ -531,6 +539,38 @@ function stageFailAll(){
 /* A search arm that died is reported, not swallowed. It does not end the run -
    the others carry on - but a quietly narrower search is exactly the thing this
    tool must not do without saying so. */
+/* How many candidates the safety screen refused. Counted here rather than
+   listed: naming the hosts on screen would defeat most of the point of not
+   downloading them. See sigil/search/safety.py. */
+let blocked = 0;
+
+function multiFace(e){
+  /* Everything after the scan is about one face, chosen by pixel area. On a
+     group photograph that can be the wrong person while every number on this
+     page looks healthy, so it is said where the operator is looking. */
+  $("errbox").insertAdjacentHTML("beforeend",
+    `<div class="err" style="border-color:var(--amber);color:var(--amber);background:rgba(255,178,36,.06)">
+       this photo contains <b>${e.faces} faces</b> — the largest was encoded and the rest ignored.
+       <span style="color:var(--dim)">Crop the image to search for one of the others.</span>
+     </div>`);
+}
+
+function showRefused(e){
+  const el = $("m-refused");
+  if(!el) return;
+  $("refused-tile").classList.remove("hide");
+  el.textContent = blocked;
+  el.title = "candidates on adult or leak-site sources, refused before download";
+}
+
+function published(e){
+  $("errbox").insertAdjacentHTML("beforeend",
+    `<div class="err" style="border-color:var(--amber);color:var(--amber);background:rgba(255,178,36,.06)">
+       the probe was uploaded to a temporary public URL so Google Lens could be asked about it;
+       it expires in ${esc(e.expires)}.
+     </div>`);
+}
+
 function providerFailed(e){
   const box = $("errbox");
   box.insertAdjacentHTML("beforeend",
@@ -629,11 +669,25 @@ function showMatch(e){
   typeHash($("m-hash"), e.hash);
 }
 
+/* "No match" is four situations with four different fixes - see
+   MatchResult.outcome - and telling the operator to broaden a query that was
+   never the problem is worse than saying nothing. */
+const NO_MATCH_ADVICE = {
+  NO_CANDIDATES: "No candidate images came back at all. Try different search terms, or configure an open-web arm to widen the search beyond Bluesky.",
+  ALL_CANDIDATES_REFUSED: "Every candidate found was on an adult or leak-site source and was refused before download. There is nothing to fix here: refusing was the correct outcome.",
+  NO_FACES_IN_CANDIDATES: "Candidates came back, but none of them contained a detectable face. That is usually an arm returning logos, screenshots or text graphics.",
+  BELOW_THRESHOLD: "A real face was compared and scored below the threshold. This is the tool working as intended: it is not the same person, at this threshold.",
+};
+
 function showNoMatch(e){
   stage("match","bad",`best ${e.best.toFixed(4)} < ${e.threshold.toFixed(3)}`);
+  const outcome = e.outcome || "BELOW_THRESHOLD";
+  const refused = e.refused
+    ? `<br>${e.refused} candidate${e.refused === 1 ? " was" : "s were"} refused before download by the safety screen.`
+    : "";
   $("errbox").innerHTML = `<div class="err" style="border-color:var(--amber);color:var(--amber);background:rgba(255,178,36,.06)">
-    No candidate cleared the ${e.threshold.toFixed(3)} threshold — best was ${e.best.toFixed(4)} across ${e.examined} images.<br>
-    <span style="color:var(--dim)">Nothing was anchored. That is the correct outcome, not a failure: try a broader query, more images, or a probe of someone with a public presence on the platform.</span>
+    <b>${esc(outcome)}</b> — no candidate cleared the ${e.threshold.toFixed(3)} threshold; best was ${e.best.toFixed(4)} across ${e.examined} images.${refused}<br>
+    <span style="color:var(--dim)">Nothing was anchored, which is the correct outcome rather than a failure. ${esc(NO_MATCH_ADVICE[outcome] || NO_MATCH_ADVICE.BELOW_THRESHOLD)}</span>
   </div>`;
 }
 
