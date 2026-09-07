@@ -896,8 +896,8 @@ two installs differ on is the skip count and the last coverage point:
 
 | install | passed | skipped | coverage |
 |---|---|---|---|
-| Quickstart `.[insight,dev]` | 638 | 1 | **97%** |
-| CI `.[dev]` | 631 | 8 | **96%** |
+| Quickstart `.[insight,dev]` | 639 | 1 | **97%** |
+| CI `.[dev]` | 632 | 8 | **96%** |
 
 The single skip in the full install is the opencv parametrisation of a test
 that only means anything for insightface; CI adds the seven that need the
@@ -910,7 +910,7 @@ obvious way to fake that condition gets it wrong: `pytest.importorskip` catches
 `ModuleNotFoundError`, so a stub raising a plain `ImportError` turns seven
 skips into a failure and quietly reports a number CI would never produce.
 
-That 639 is a 3.11-and-up figure. On 3.10 it is 631, because `tomllib` is not
+That 640 is a 3.11-and-up figure. On 3.10 it is 632, because `tomllib` is not
 in that stdlib and `tests/test_packaging.py` skips at import — a module-level
 skip drops its eight tests out of *collection* rather than reporting them as
 skipped, which is the one way a count stops being comparable between two runs.
