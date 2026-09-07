@@ -260,3 +260,66 @@ def test_an_undecodable_probe_is_refused_before_the_encoder():
 
     with pytest.raises(PipelineError, match="could not be decoded"):
         pipe.scan_probe(b"this is not an image", Config())
+
+
+# ----------------------------------------------------- how many faces were there
+
+
+def _two_face_image():
+    """The two committed examples side by side: one image, two different people."""
+    import cv2
+    import numpy as np
+
+    from sigil.face import decode_image
+
+    a = decode_image(EXAMPLE_PROBE.read_bytes())
+    b = decode_image(EXAMPLE_CONTROL.read_bytes())
+    h = min(a.shape[0], b.shape[0])
+    a = cv2.resize(a, (round(a.shape[1] * h / a.shape[0]), h))
+    b = cv2.resize(b, (round(b.shape[1] * h / b.shape[0]), h))
+    ok, buf = cv2.imencode(".jpg", np.hstack([a, b]))
+    assert ok
+    return buf.tobytes()
+
+
+def test_a_single_face_probe_records_one_face(cfg):
+    from sigil.pipeline import scan_probe
+
+    _, ref, _ = scan_probe(EXAMPLE_PROBE.read_bytes(), cfg)
+    assert ref.faces_in_image == 1
+
+
+def test_a_group_photo_records_how_many_faces_it_had(cfg):
+    """The choice of face is by pixel area and is otherwise invisible.
+
+    Everything after the scan is about one face. On a photograph of several
+    people that face is whichever is biggest, which need not be the one the
+    operator meant - and a bundle that does not say how many were present
+    gives its reader no way to see the ambiguity.
+    """
+    from sigil.pipeline import scan_probe
+
+    _, ref, _ = scan_probe(_two_face_image(), cfg)
+    assert ref.faces_in_image == 2
+
+
+def test_a_group_photo_says_so_during_the_run(cfg, monkeypatch, tmp_path):
+    import sigil.pipeline as pipeline
+
+    path = tmp_path / "two.jpg"
+    path.write_bytes(_two_face_image())
+
+    events = []
+    monkeypatch.setattr(pipeline, "build_providers", lambda *a, **k: [])
+    result = pipeline.run_pipeline(str(path), "someone", cfg, do_anchor=False,
+                                   on_event=events.append)
+
+    assert not result.found
+    warned = [e for e in events if e["type"] == "multiface"]
+    assert warned and warned[0]["faces"] == 2
+    # And it is said before anything is searched for, not buried in the bundle
+    # at the end, since the operator's fix is to crop and re-run.
+    assert events.index(warned[0]) < next(
+        i for i, e in enumerate(events)
+        if e.get("type") == "stage" and e.get("stage") == "search"
+    )

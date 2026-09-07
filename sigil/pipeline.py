@@ -81,6 +81,7 @@ def scan_probe(image_bytes: bytes, cfg: Config) -> tuple[Face, ProbeRef, Any]:
         bbox=face.bbox,
         det_score=round(face.det_score, 4),
         provider=getattr(encoder, "provider", ""),
+        faces_in_image=len(faces),
     )
     return face, ref, encoder
 
@@ -158,8 +159,19 @@ def run_pipeline(
         "image_sha256": probe_ref.image_sha256,
         "embedding_sha256": probe_ref.embedding_sha256,
         "threshold": threshold,
+        "faces_in_image": probe_ref.faces_in_image,
         "crop": face_crop_data_uri(image_bytes, probe_ref.bbox),
     })
+    # Said out loud, not merely recorded. Everything after this point is about
+    # one face, and which one was chosen by pixel area rather than by anything
+    # the operator asked for - so on a group photograph the entire run can be
+    # about the wrong person while every number in the output looks healthy.
+    if probe_ref.faces_in_image > 1:
+        emit({
+            "type": "multiface",
+            "faces": probe_ref.faces_in_image,
+            "bbox": probe_ref.bbox,
+        })
     emit({"type": "stage", "stage": "scan", "status": "done"})
 
     # No query supplied means "you tell me who this is" - the whole point of

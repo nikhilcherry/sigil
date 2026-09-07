@@ -46,6 +46,14 @@ def probe_panel(ref, path: str) -> None:
                          + (f" [dim]on {ref.provider.replace('ExecutionProvider', '')}"
                             f"[/dim]" if ref.provider else ""))
     t.add_row("face bbox", str(ref.bbox))
+    # Only when there was a choice to make. On one face this row would say
+    # "1" on every run and stop being read, which is the state you do not want
+    # it in on the run where it says 4.
+    faces = getattr(ref, "faces_in_image", 1)
+    if faces > 1:
+        t.add_row("faces in image",
+                  f"[yellow]{faces}[/yellow] [dim]- the largest was used; "
+                  f"crop to choose another[/dim]")
     t.add_row("detector score", f"{ref.det_score:.4f}")
     t.add_row("image sha256", ref.image_sha256)
     t.add_row("embedding sha256", ref.embedding_sha256)
