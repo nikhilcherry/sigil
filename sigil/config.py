@@ -8,6 +8,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from .face.encoder import SUBJECT_POLICIES
+
 load_dotenv()
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -36,6 +38,24 @@ def _env_float(name: str, default: float) -> float:
         return float(os.getenv(name, "") or default)
     except ValueError:
         return default
+
+
+def _env_subject() -> str:
+    """Parse SIGIL_SUBJECT, refusing rather than defaulting on nonsense.
+
+    Refused for the same reason as the threshold: it decides *which face the
+    run is about*, so a typo'd value quietly falling back to "largest" would
+    silently run the whole pipeline on the wrong person in a group photograph.
+    """
+    raw = (os.getenv("SIGIL_SUBJECT", "") or "largest").strip().lower()
+    if raw == "center":  # the spelling is British throughout; the flag is not fussy
+        raw = "centre"
+    if raw not in SUBJECT_POLICIES:
+        raise ValueError(
+            f"SIGIL_SUBJECT must be one of {', '.join(SUBJECT_POLICIES)}, got {raw!r}. "
+            "It picks which detected face the run is about, so it is not defaulted silently."
+        )
+    return raw
 
 
 def _env_threshold() -> float | None:
@@ -69,6 +89,8 @@ def _env_threshold() -> float | None:
 class Config:
     face_backend: str = field(default_factory=lambda: os.getenv("SIGIL_FACE_BACKEND", "auto"))
     threshold: float | None = field(default_factory=_env_threshold)
+    # Which face, when the image holds more than one. See face/encoder.py.
+    subject: str = field(default_factory=_env_subject)
 
     # --- search ---
     max_actors: int = field(default_factory=lambda: _env_int("SIGIL_MAX_ACTORS", 25))

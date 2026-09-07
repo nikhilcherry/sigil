@@ -119,3 +119,35 @@ def test_a_blank_threshold_means_use_the_backend_default(monkeypatch):
     monkeypatch.setenv("SIGIL_THRESHOLD", "   ")
 
     assert Config().threshold is None
+
+
+@pytest.mark.parametrize("value,expected", [
+    ("largest", "largest"),
+    ("centre", "centre"),
+    ("center", "centre"),   # the code spells it British; the operator need not
+    ("  CENTRE  ", "centre"),
+])
+def test_a_known_subject_policy_is_accepted(monkeypatch, value, expected):
+    monkeypatch.setenv("SIGIL_SUBJECT", value)
+
+    assert Config().subject == expected
+
+
+def test_the_subject_policy_defaults_to_largest(monkeypatch):
+    monkeypatch.delenv("SIGIL_SUBJECT", raising=False)
+
+    assert Config().subject == "largest"
+
+
+@pytest.mark.parametrize("value", ["biggest", "middle", "leftmost", "1"])
+def test_an_unknown_subject_policy_is_refused(monkeypatch, value):
+    """Refused for the same reason as the threshold, one step earlier.
+
+    This decides *which face* the run is about. On a group photograph a quiet
+    fallback would put the whole pipeline on the wrong person, and every number
+    in the output - similarity, hash, chain record - would look healthy.
+    """
+    monkeypatch.setenv("SIGIL_SUBJECT", value)
+
+    with pytest.raises(ValueError, match="SIGIL_SUBJECT"):
+        Config()

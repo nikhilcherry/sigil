@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -12,7 +12,7 @@ import requests
 from .chain import ChainClient, Verification
 from .config import Config
 from .evidence import Evidence, MatchRef, ProbeRef, sha256_hex, utc_now
-from .face import Face, decode_image, largest_face, load_encoder
+from .face import Face, decode_image, face_at, load_encoder, select_subject
 from .search import (
     BlueskyProvider,
     GoogleVisionProvider,
@@ -60,15 +60,32 @@ def load_probe_bytes(source: str, cfg: Config) -> tuple[bytes, str | None]:
     return p.read_bytes(), None
 
 
-def scan_probe(image_bytes: bytes, cfg: Config) -> tuple[Face, ProbeRef, Any]:
-    """Detect and encode the input face. This is step one of the pipeline."""
+def scan_probe(
+    image_bytes: bytes, cfg: Config, match_bbox: Sequence[float] | None = None
+) -> tuple[Face, ProbeRef, Any]:
+    """Detect and encode the input face. This is step one of the pipeline.
+
+    ``match_bbox`` re-opens an image on a face already chosen: pass the box a
+    bundle recorded and this returns that face rather than re-running the
+    selection policy over the image. Verification wants exactly that - see
+    ``face_at`` - so that re-checking a bundle asks whether the recorded face
+    still encodes the same, not whether today's policy would have picked it.
+    """
     encoder = load_encoder(cfg.face_backend)
     img = decode_image(image_bytes)
     if img is None:
         raise PipelineError("probe image could not be decoded as an image")
 
     faces = encoder.detect_and_encode(img)
-    face = largest_face(faces)
+    if match_bbox is not None:
+        face = face_at(faces, match_bbox)
+        if face is None:
+            raise PipelineError(
+                "the face the bundle records is not in this image - either this is a "
+                "different photograph, or it has been altered where that face was"
+            )
+    else:
+        face = select_subject(faces, cfg.subject, img.shape)
     if face is None:
         raise PipelineError(
             "no face detected in the probe image - try a clearer, front-facing photo"
@@ -164,14 +181,17 @@ def run_pipeline(
         "crop": face_crop_data_uri(image_bytes, probe_ref.bbox),
     })
     # Said out loud, not merely recorded. Everything after this point is about
-    # one face, and which one was chosen by pixel area rather than by anything
-    # the operator asked for - so on a group photograph the entire run can be
-    # about the wrong person while every number in the output looks healthy.
+    # one face, and which one was chosen by a rule rather than by anything the
+    # operator asked for - so on a group photograph the entire run can be about
+    # the wrong person while every number in the output looks healthy. The rule
+    # is named here because the other one would have picked differently, and
+    # --subject is how the operator overrides it.
     if probe_ref.faces_in_image > 1:
         emit({
             "type": "multiface",
             "faces": probe_ref.faces_in_image,
             "bbox": probe_ref.bbox,
+            "subject": cfg.subject,
         })
     emit({"type": "stage", "stage": "scan", "status": "done"})
 
@@ -291,7 +311,7 @@ def run_pipeline(
     # answered differently on a second pass would silently stop verifying
     # against its own probe. Measured deterministic on both backends, and one
     # extra encode is about 1% of a run.
-    _, recheck, _ = scan_probe(image_bytes, cfg)
+    _, recheck, _ = scan_probe(image_bytes, cfg, match_bbox=result.evidence.probe.bbox)
     result.verification = client.verify(
         result.evidence, probe_embedding_sha256=recheck.embedding_sha256
     )

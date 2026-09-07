@@ -584,6 +584,11 @@ REVIEWED_SAFE_INTERPOLATIONS = {
     "refused",
     # Ternaries over string literals this file owns end to end.
     'e.refused === 1 ? " was" : "s were"',
+    # Both are ternaries over string literals two lines above, naming which
+    # subject policy chose the face. `e.subject` is one of two values the
+    # pipeline emits, and neither branch reaches the page as an interpolation.
+    "chose",
+    "other",
     'copy ? "copy" : ""',
     'h.accepted ? "ok" : ""',
     'mine ? "anchored" : ""',

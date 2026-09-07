@@ -1,3 +1,25 @@
-from .encoder import Face, FaceEncoder, cosine, decode_image, largest_face, load_encoder
+from .encoder import (
+    SUBJECT_POLICIES,
+    Face,
+    FaceEncoder,
+    centre_face,
+    cosine,
+    decode_image,
+    face_at,
+    largest_face,
+    load_encoder,
+    select_subject,
+)
 
-__all__ = ["Face", "FaceEncoder", "cosine", "largest_face", "load_encoder", "decode_image"]
+__all__ = [
+    "SUBJECT_POLICIES",
+    "Face",
+    "FaceEncoder",
+    "centre_face",
+    "cosine",
+    "decode_image",
+    "face_at",
+    "largest_face",
+    "load_encoder",
+    "select_subject",
+]

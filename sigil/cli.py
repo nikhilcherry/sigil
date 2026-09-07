@@ -40,6 +40,11 @@ def _chain_errors():
         raise click.ClickException(str(exc)) from exc
 
 
+def _subject(value: str | None) -> str | None:
+    """Normalise the --subject spelling; None leaves the config default alone."""
+    return None if value is None else ("centre" if value == "center" else value)
+
+
 def _cfg(**overrides) -> Config:
     try:
         cfg = Config()
@@ -92,6 +97,8 @@ def cli() -> None:
               help="Search terms. Omit to identify the face from the index first.")
 @click.option("--backend", type=click.Choice(["auto", "insightface", "opencv"]),
               default=None, help="Face recognition backend.")
+@click.option("--subject", type=click.Choice(["largest", "centre", "center"]), default=None,
+              help="Which face, when the image holds more than one: the biggest (default) or the one nearest the middle of the frame.")
 @click.option("--threshold", type=float, default=None, help="Cosine similarity cut-off.")
 @click.option("--max-images", type=int, default=None, help="Cap on images to examine.")
 @click.option("--chain", "chain_backend", type=click.Choice(["local", "rpc"]), default=None,
@@ -104,14 +111,15 @@ def cli() -> None:
                    "can be asked about a local file. Publishes a face; opt-in.")
 @click.option("-o", "--out", type=click.Path(path_type=Path), default=DEFAULT_EVIDENCE,
               show_default=True, help="Where to write the evidence bundle.")
-def run(image, query, backend, threshold, max_images, chain_backend, no_anchor,
+def run(image, query, backend, subject, threshold, max_images, chain_backend, no_anchor,
         allow_unsafe, publish_probe, out):
     """Run the whole pipeline on IMAGE (a file path or an https URL)."""
     # `or None` so the flag can only ever turn the screen off: _cfg skips None
     # overrides, which leaves SIGIL_ALLOW_UNSAFE in charge when the flag is
     # absent. Passing False unconditionally would make an unset flag silently
     # override an operator's environment.
-    cfg = _cfg(face_backend=backend, threshold=threshold, max_images=max_images,
+    cfg = _cfg(face_backend=backend, subject=_subject(subject), threshold=threshold,
+               max_images=max_images,
                chain_backend=chain_backend, allow_unsafe=allow_unsafe or None,
                publish_probe=publish_probe or None)
     total = 3 if no_anchor else 5
@@ -192,9 +200,11 @@ def run(image, query, backend, threshold, max_images, chain_backend, no_anchor,
 @cli.command()
 @click.argument("image")
 @click.option("--backend", type=click.Choice(["auto", "insightface", "opencv"]), default=None)
-def scan(image, backend):
+@click.option("--subject", type=click.Choice(["largest", "centre", "center"]), default=None,
+              help="Which face, when the image holds more than one: the biggest (default) or the one nearest the middle of the frame.")
+def scan(image, backend, subject):
     """Stage 1 only: detect and encode the face in IMAGE."""
-    cfg = _cfg(face_backend=backend)
+    cfg = _cfg(face_backend=backend, subject=_subject(subject))
     try:
         image_bytes, _ = load_probe_bytes(image, cfg)
         _, ref, _ = scan_probe(image_bytes, cfg)
@@ -210,14 +220,17 @@ def scan(image, backend):
 @click.argument("image")
 @click.option("-q", "--query", default="")
 @click.option("--backend", type=click.Choice(["auto", "insightface", "opencv"]), default=None)
+@click.option("--subject", type=click.Choice(["largest", "centre", "center"]), default=None,
+              help="Which face, when the image holds more than one: the biggest (default) or the one nearest the middle of the frame.")
 @click.option("--threshold", type=float, default=None)
 @click.option("--max-images", type=int, default=None)
 @click.option("--allow-unsafe", is_flag=True, default=False)
 @click.option("-o", "--out", type=click.Path(path_type=Path), default=DEFAULT_EVIDENCE)
-def search(image, query, backend, threshold, max_images, allow_unsafe, out):
+def search(image, query, backend, subject, threshold, max_images, allow_unsafe, out):
     """Stages 1-3: scan, search and match, without touching a chain."""
     ctx = click.get_current_context()
-    ctx.invoke(run, image=image, query=query, backend=backend, threshold=threshold,
+    ctx.invoke(run, image=image, query=query, backend=backend, subject=subject,
+               threshold=threshold,
                max_images=max_images, chain_backend=None, no_anchor=True,
                allow_unsafe=allow_unsafe, publish_probe=False, out=out)
 
@@ -250,14 +263,18 @@ def anchor(evidence_path, chain_backend):
 @click.option("--chain", "chain_backend", type=click.Choice(["local", "rpc"]), default=None)
 @click.option("--probe", type=click.Path(path_type=Path), default=None,
               help="Re-scan this face and confirm it is the one in the bundle.")
+@click.option("--subject", type=click.Choice(["largest", "centre", "center"]), default=None,
+              help="Which face to fall back to if the box the bundle records holds none. "
+                   "The check itself follows the bundle, so this does not change a verdict "
+                   "on the right photograph.")
 @click.option("--recheck-source", is_flag=True,
               help="Re-download the matched post image and confirm its bytes are unchanged.")
 @click.option("--log-on-chain", is_flag=True,
               help="Also write a receipt saying this hash was checked. Costs gas; "
                    "for when proving later that you looked is itself the point.")
-def verify(evidence_path, chain_backend, probe, recheck_source, log_on_chain):
+def verify(evidence_path, chain_backend, probe, subject, recheck_source, log_on_chain):
     """Stage 5: recompute the hash locally and check it against chain state."""
-    cfg = _cfg(chain_backend=chain_backend)
+    cfg = _cfg(chain_backend=chain_backend, subject=_subject(subject))
     ev = _load_evidence(evidence_path)
     with _chain_errors():
         client = ChainClient(cfg)
@@ -265,7 +282,23 @@ def verify(evidence_path, chain_backend, probe, recheck_source, log_on_chain):
     probe_digest = probe_bytes = None
     if probe:
         probe_bytes, _ = load_probe_bytes(str(probe), cfg)
-        _, ref, _ = scan_probe(probe_bytes, cfg)
+        # On the box the bundle recorded, not on whatever a selection policy
+        # would pick today - otherwise a bundle anchored under one --subject
+        # would fail to verify under another, and a disagreement about framing
+        # would read as a tampering alarm.
+        #
+        # When that box holds no face, this is simply the wrong photograph, or
+        # one edited where the face was. That is a failed check and not a
+        # broken command: falling back to the policy's pick reports it as the
+        # FAIL it is, in a panel alongside the chain and similarity checks,
+        # rather than aborting and printing none of them.
+        try:
+            _, ref, _ = scan_probe(probe_bytes, cfg, match_bbox=ev.probe.bbox)
+        except PipelineError:
+            try:
+                _, ref, _ = scan_probe(probe_bytes, cfg)
+            except PipelineError as exc:
+                raise click.ClickException(str(exc)) from exc
         probe_digest = ref.embedding_sha256
 
     with _chain_errors():

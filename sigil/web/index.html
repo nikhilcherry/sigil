@@ -236,6 +236,13 @@ footer{margin-top:34px;padding-top:16px;border-top:1px solid var(--rule);color:v
           </label>
         </div>
 
+        <label class="f" style="margin-top:12px"><i>Subject, when the photo has several faces</i>
+          <select id="subject">
+            <option value="largest">largest face</option>
+            <option value="centre">face nearest the centre</option>
+          </select>
+        </label>
+
         <button class="run" id="run" disabled>Run pipeline</button>
       </div>
     </div>
@@ -436,7 +443,8 @@ $("run").onclick = async () => {
       method:"POST", headers:{"Content-Type":"application/json"},
       body: JSON.stringify({
         image_b64: probeB64, mime: probeMime, query,
-        face_backend: $("backend").value, max_images: $("maxi").value
+        face_backend: $("backend").value, max_images: $("maxi").value,
+        subject: $("subject").value
       })
     });
     const j = await r.json();
@@ -545,13 +553,16 @@ function stageFailAll(){
 let blocked = 0;
 
 function multiFace(e){
-  /* Everything after the scan is about one face, chosen by pixel area. On a
-     group photograph that can be the wrong person while every number on this
-     page looks healthy, so it is said where the operator is looking. */
+  /* Everything after the scan is about one face, chosen by a rule. On a group
+     photograph that can be the wrong person while every number on this page
+     looks healthy, so it is said where the operator is looking — including
+     which rule chose, because the other one would have picked differently. */
+  const chose = e.subject === "centre" ? "the one nearest the centre was" : "the largest was";
+  const other = e.subject === "centre" ? "largest face" : "face nearest the centre";
   $("errbox").insertAdjacentHTML("beforeend",
     `<div class="err" style="border-color:var(--amber);color:var(--amber);background:rgba(255,178,36,.06)">
-       this photo contains <b>${e.faces} faces</b> — the largest was encoded and the rest ignored.
-       <span style="color:var(--dim)">Crop the image to search for one of the others.</span>
+       this photo contains <b>${e.faces} faces</b> — ${chose} encoded and the rest ignored.
+       <span style="color:var(--dim)">Crop the image, or switch Subject to “${other}”, to search for one of the others.</span>
      </div>`);
 }
 
