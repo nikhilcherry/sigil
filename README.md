@@ -543,22 +543,49 @@ warm, not anything about the evidence. The run prints a block-explorer link for
 the transaction.
 
 Two notes from actually testing this. First, `rpc-amoy.polygon.technology` — the
-endpoint most guides cite — was unreachable during development;
+endpoint most guides cite — is unreachable from here;
 `polygon-amoy-bor-rpc.publicnode.com` and `polygon-amoy.drpc.org` both work
-(chain id 80002). Second, the RPC path here has been exercised end to end
-against a live Amoy node up to the point of funding, and re-checked against it
-on 2026-09-03: `sigil chain address --chain rpc` connects, reports chain id
-80002, derives the address and reads its balance without deploying anything,
-and `sigil chain info` then refuses with
+(chain id 80002). Second, an unfunded key fails with a message rather than a
+web3 traceback, and exits 1 so a script can act on it:
 
 ```
 Error: 0x0b86bB… has no funds on chain 80002. Fund it from a testnet faucet
 (`sigil chain address` shows the address and its balance), or use SIGIL_CHAIN=local.
 ```
 
-— a message rather than a web3 traceback, exiting 1 so a script can act on it.
-Fund a throwaway address from an Amoy faucet and it deploys for real. That is
-the only step that needs a human.
+#### The live record on Polygon Amoy
+
+Funding a throwaway address from a faucet is the only step that needs a human.
+That was done on 2026-09-07, so the RPC path is no longer exercised only up to
+the point of funding — every figure here is a link a reader can open instead of
+a claim to take on trust:
+
+| | |
+|---|---|
+| registry | [`0xEd733b7493cd9ed9FdD60BD4fB85d8a8c21fB39e`](https://amoy.polygonscan.com/address/0xEd733b7493cd9ed9FdD60BD4fB85d8a8c21fB39e) |
+| deployed | [block 46,969,790](https://amoy.polygonscan.com/tx/0x032e5340b0fab5345e58e1ad2043264dd3a1bba47ba8b17690390602e89a8b6d) · 318,609 gas · 2026-09-07 13:37:12 UTC |
+| anchored | [block 46,970,130](https://amoy.polygonscan.com/tx/0x339f45700a6a1e13c6a09c0e8f9b5fcd12a5f9864aa15832b55446834adde016) · 122,622 gas · 2026-09-07 13:42:52 UTC |
+| submitter | `0x95B646874CdF7AA7166087F111B0bAF146263Bda` |
+| evidence hash | `0x69417151dae76d54702b46976c01866216c68569c8a2afb2ce3dc722e512388d` |
+| what was anchored | `@aoc.bsky.social`, similarity **0.7598** against a 0.380 threshold, photo-similarity 0.0213 — a different photograph of the same face, not a republication of the probe |
+
+The bundle that hash covers is 2,255 canonical bytes of `sigil/evidence/v4`. A
+later, separate process then read the record back out of Amoy state —
+
+```bash
+sigil verify --chain rpc --probe examples/probe-aoc.jpg --recheck-source
+```
+
+— and passed all six checks: record on chain, similarity matches, subject
+commitment, probe re-encodes, source image intact, claim re-derives.
+
+That anchor cost 122,622 gas against the 114,222 quoted above, which is the
+local chain's figure for a first record. The two were measured on different
+chains and different evidence schemas, and the gap is not accounted for here.
+
+**Pin `SIGIL_CONTRACT` to the deployed address.** Until it is set there is
+nothing to recall the address from on the rpc backend, so each command deploys
+its own registry — see the note on `ensure_deployed`.
 
 ### 5 · Calibration — what the threshold actually costs
 
@@ -858,11 +885,11 @@ naming here rather than leaving in the file:
 ## Tests
 
 ```bash
-pytest -m "not network"   # 639 offline tests, 97% line coverage
+pytest -m "not network"   # 640 offline tests, 97% line coverage
 pytest -m network         # 3 tests against the live API and a live chain
 ```
 
-Both installs collect the same **639 offline tests**. Every insightface gate in
+Both installs collect the same **640 offline tests**. Every insightface gate in
 the suite is a runtime skip inside a test body rather than a collection-time
 one, so the extra changes how many tests *run*, not how many exist. What the
 two installs differ on is the skip count and the last coverage point:

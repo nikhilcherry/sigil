@@ -153,6 +153,19 @@ class ChainClient:
         return self._recall("contract_address")
 
     def ensure_deployed(self) -> str:
+        # A deploy already made in this process is authoritative. On the rpc
+        # backend nothing persists the address between calls - `_remember`
+        # writes into the local chain's snapshot and there is no snapshot
+        # here - so `deployed_address()` keeps returning None and every call
+        # deploys a *second* identical registry. `sigil chain info` did
+        # exactly that on Polygon Amoy: one invocation, two deployments five
+        # blocks apart (0xEd733b74... then 0x55aFda49..., 318,609 gas each),
+        # and the record count it printed was read off the copy rather than
+        # off the contract named on the line above it. Masked on the local
+        # backend, where `_recall` does return the address - which is why
+        # test_chain's idempotence assertion passed throughout.
+        if self.contract is not None:
+            return self.contract.address
         addr = self.deployed_address()
         if addr and self._code_at(addr):
             self.contract = self.w3.eth.contract(

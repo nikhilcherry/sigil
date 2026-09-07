@@ -21,6 +21,39 @@ def test_deploy_is_idempotent(client):
     assert client.total_anchored() == 0
 
 
+def test_rpc_deploy_is_idempotent_within_one_process(cfg, monkeypatch):
+    """The same claim as above, on the backend where it was false.
+
+    `deployed_address()` consults the env var on rpc and the chain snapshot
+    everywhere else, and rpc has no snapshot - so a second call deployed a
+    second identical registry and the caller read from the copy. One
+    `sigil chain info` against Polygon Amoy produced two deployments five
+    blocks apart at 318,609 gas each. The test above cannot see it: on the
+    local backend `_recall` returns the address, so it never reaches
+    `deploy()` twice.
+    """
+    client = ChainClient(cfg)
+    # The rpc condition exactly: the address is never recalled between calls,
+    # because there is no snapshot to recall it from and nothing is pinned in
+    # the environment. Forcing `backend = "rpc"` outright would additionally
+    # route `_send` through a private key the fixtures deliberately clear,
+    # which is a different failure and would not exercise this decision.
+    monkeypatch.setattr(client, "deployed_address", lambda: None)
+
+    deploys = []
+    real_deploy = client.deploy
+
+    def counting_deploy():
+        deploys.append(1)
+        return real_deploy()
+
+    monkeypatch.setattr(client, "deploy", counting_deploy)
+
+    first = client.ensure_deployed()
+    assert client.ensure_deployed() == first
+    assert deploys == [1], "the second call deployed a second registry"
+
+
 def test_anchor_then_verify(client, evidence):
     receipt = client.anchor(evidence)
     assert receipt["already_anchored"] is False
