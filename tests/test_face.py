@@ -4,7 +4,16 @@ same contract; a backend that cannot load on this machine is skipped, not failed
 import numpy as np
 import pytest
 
-from sigil.face import Face, cosine, decode_image, largest_face, load_encoder
+from sigil.face import (
+    Face,
+    centre_face,
+    cosine,
+    decode_image,
+    face_at,
+    largest_face,
+    load_encoder,
+    select_subject,
+)
 from tests.conftest import EXAMPLE_CONTROL, EXAMPLE_PROBE
 
 BACKENDS = ["insightface", "opencv"]
@@ -53,6 +62,48 @@ def test_largest_face_picks_the_dominant_subject():
     big = Face(np.ones(4, dtype=np.float32), [0, 0, 100, 100], 0.50)
     assert largest_face([small, big]) is big
     assert largest_face([]) is None
+
+
+def test_centre_face_picks_the_subject_the_framing_points_at():
+    # The bystander is bigger; the person the photographer centred is not.
+    bystander = Face(np.ones(4, dtype=np.float32), [0, 0, 100, 100], 0.9)
+    subject = Face(np.ones(4, dtype=np.float32), [110, 110, 140, 140], 0.9)
+    assert centre_face([bystander, subject], (250, 250)) is subject
+    assert centre_face([], (250, 250)) is None
+
+
+def test_the_two_policies_disagree_and_that_is_the_point():
+    bystander = Face(np.ones(4, dtype=np.float32), [0, 0, 100, 100], 0.9)
+    subject = Face(np.ones(4, dtype=np.float32), [110, 110, 140, 140], 0.9)
+    faces = [bystander, subject]
+    assert select_subject(faces, "largest", (250, 250)) is bystander
+    assert select_subject(faces, "centre", (250, 250)) is subject
+
+
+def test_a_single_face_is_the_subject_under_either_policy():
+    only = Face(np.ones(4, dtype=np.float32), [5, 5, 20, 20], 0.9)
+    assert select_subject([only], "largest", (250, 250)) is only
+    assert select_subject([only], "centre", (250, 250)) is only
+
+
+def test_an_unknown_subject_policy_is_refused_not_defaulted():
+    face = Face(np.ones(4, dtype=np.float32), [0, 0, 10, 10], 0.9)
+    # Silently falling back would run the pipeline on a face nobody chose.
+    with pytest.raises(ValueError, match="unknown subject policy"):
+        select_subject([face], "leftmost", (250, 250))
+    with pytest.raises(ValueError, match="shape"):
+        select_subject([face], "centre")
+
+
+def test_face_at_finds_the_recorded_face_regardless_of_policy():
+    a = Face(np.ones(4, dtype=np.float32), [0, 0, 100, 100], 0.9)
+    b = Face(np.ones(4, dtype=np.float32), [110, 110, 140, 140], 0.9)
+    # Slightly moved, as a re-detection would be - still the same face.
+    assert face_at([a, b], [2, 1, 99, 101]) is a
+    assert face_at([a, b], [110, 110, 140, 140]) is b
+    # Nothing overlapping it: the bundle's face is not in this image.
+    assert face_at([a, b], [200, 200, 240, 240]) is None
+    assert face_at([], [0, 0, 10, 10]) is None
 
 
 def test_embedding_digest_is_stable_for_identical_vectors():

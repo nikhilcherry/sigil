@@ -89,7 +89,7 @@ def _run_job(job: Job, probe_path: Path, query: str, opts: dict[str, Any]) -> No
     # than defaulted, and the options below come straight from the request.
     try:
         cfg = Config()
-        for key in ("face_backend", "chain_backend"):
+        for key in ("face_backend", "chain_backend", "subject"):
             if opts.get(key):
                 setattr(cfg, key, opts[key])
         if opts.get("max_images"):

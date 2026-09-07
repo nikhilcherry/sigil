@@ -9,7 +9,7 @@ from sigil.chain import ChainClient
 from sigil.cli import cli
 from sigil.evidence import Evidence
 from sigil.search.base import Candidate, ProviderTrace
-from tests.conftest import EXAMPLE_PROBE
+from tests.conftest import EXAMPLE_CONTROL, EXAMPLE_PROBE
 
 
 def test_chain_address_reports_without_deploying(cfg, monkeypatch):
@@ -113,6 +113,52 @@ def test_the_demo_sequence_runs_end_to_end(offline):
     rejected = runner.invoke(cli, ["verify", "-e", str(tampered)])
     assert rejected.exit_code == 1, rejected.output
     assert "NOT VERIFIED" in rejected.output
+
+
+def test_a_bundle_verifies_under_either_subject_policy(offline, monkeypatch):
+    """Anchor under one --subject, re-check under the other, and it still holds.
+
+    The probe check re-encodes the face the bundle *records* rather than
+    re-running the selection rule, so the two policies disagreeing about which
+    face to pick cannot masquerade as evidence of tampering. Without that, a
+    bundle would only verify on a machine configured the way the one that
+    anchored it was.
+    """
+    runner = CliRunner()
+    evidence = offline / "evidence.json"
+
+    anchored = runner.invoke(cli, ["run", str(EXAMPLE_PROBE), "-q", "who",
+                                   "--subject", "largest", "-o", str(evidence)])
+    assert anchored.exit_code == 0, anchored.output
+
+    rechecked = runner.invoke(cli, ["verify", "-e", str(evidence),
+                                    "--probe", str(EXAMPLE_PROBE),
+                                    "--subject", "centre"])
+    assert rechecked.exit_code == 0, rechecked.output
+    assert "VERIFIED" in rechecked.output
+    assert "probe re-encodes" in rechecked.output
+
+
+def test_the_wrong_probe_fails_the_check_rather_than_the_command(offline):
+    """A mismatched probe is a verdict, not a crash.
+
+    The panel is the deliverable: aborting would withhold the chain and
+    similarity checks, which are exactly what someone handed a suspect bundle
+    needs to see alongside the failure.
+    """
+    runner = CliRunner()
+    evidence = offline / "evidence.json"
+
+    anchored = runner.invoke(cli, ["run", str(EXAMPLE_PROBE), "-q", "who",
+                                   "-o", str(evidence)])
+    assert anchored.exit_code == 0, anchored.output
+
+    wrong = runner.invoke(cli, ["verify", "-e", str(evidence),
+                                "--probe", str(EXAMPLE_CONTROL)])
+    assert wrong.exit_code == 1, wrong.output
+    assert "NOT VERIFIED" in wrong.output
+    assert "record on chain" in wrong.output       # the other checks still reported
+    assert "probe re-encodes" in wrong.output
 
 
 def test_no_match_exits_two_and_anchors_nothing(offline, monkeypatch):

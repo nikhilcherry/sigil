@@ -164,11 +164,12 @@ def test_the_probe_is_encoded_a_second_time_to_verify_rather_than_echoed(
 
     wired(["https://x/same.jpg"])
     real_scan = pipe.scan_probe
-    seen = []
+    seen, boxes = [], []
 
-    def counted(image_bytes, config):
-        out = real_scan(image_bytes, config)
+    def counted(image_bytes, config, match_bbox=None):
+        out = real_scan(image_bytes, config, match_bbox=match_bbox)
         seen.append(out[1].embedding_sha256)
+        boxes.append(match_bbox)
         return out
 
     monkeypatch.setattr(pipe, "scan_probe", counted)
@@ -177,6 +178,10 @@ def test_the_probe_is_encoded_a_second_time_to_verify_rather_than_echoed(
     assert len(seen) == 2, f"the probe was encoded {len(seen)} time(s), not twice"
     assert seen[0] == seen[1], "encoding one probe twice gave two different answers"
     assert result.verification.probe_matches is True
+    # The first pass chooses a face; the second is told which face was chosen,
+    # so the check survives the run and the re-check disagreeing about --subject.
+    assert boxes[0] is None
+    assert boxes[1] == result.evidence.probe.bbox
 
 
 # ------------------------------------------------ where the probe comes from

@@ -256,6 +256,21 @@ asserts it on every run so a model or preprocessing change cannot quietly erode
 it. Two images is an illustration rather than evidence, though — for the
 measured version, see [§5](#5--calibration--what-the-threshold-actually-costs).
 
+**Which face, when the photograph holds several.** Everything after the scan is
+about exactly one face, so on a group photograph the choice decides who the
+entire run is about — and every number downstream looks healthy either way.
+`--subject largest` (the default) takes the biggest face, on the reasoning that
+a probe someone hands you is usually of the person filling the frame.
+`--subject centre` takes the one nearest the middle, which is right when the
+framing carries the intent instead. The run says out loud which rule it used
+whenever more than one face was found, and the difference between them is
+measured rather than argued about — see
+[against LFW](#against-a-public-yardstick--lfw), where it is worth 1.39 points
+of accuracy. A bundle records the box of the face it was about, so re-verifying
+one anchored under either setting works under the other: the check asks whether
+*that* face still encodes to the recorded digest, which is a question the
+policy does not enter into.
+
 ### 2 · Identification — turning a face into a name
 
 This stage exists because of a hole in the obvious design. Bluesky has no face
@@ -724,6 +739,64 @@ subject of a lead image is taken to be its largest face, which is wrong for the
 occasional group photo and depresses it. Neither is corrected by hand, because
 a hand-corrected set is not a measurement.
 
+#### Against a public yardstick — LFW
+
+Everything above is measured on a set this project harvested itself, which is
+the weakest thing about it: a tool that builds its own exam can flatter itself
+without anyone noticing. So the encoder is also run against **Labeled Faces in
+the Wild**, the standard face-verification benchmark — 6,000 pairs, half of
+them the same person, in ten folds. The protocol matters as much as the data:
+the decision threshold is fitted on nine folds and tested on the tenth, so no
+number below is measured at a threshold chosen on the pairs it is scoring.
+
+```bash
+./scripts/fetch_lfw.sh                      # ~232 MB, sha256-pinned, once
+.venv/bin/python scripts/bench_lfw.py       # ~5 min cold, seconds cached
+```
+
+Both `--subject` policies are scored over *identical* embeddings, so the only
+variable between the columns is which face gets picked:
+
+| | `largest` *(default)* | `centre` |
+|---|---|---|
+| **10-fold accuracy** | 98.46% ± 0.45 | **99.85% ± 0.20** |
+| ROC AUC | 0.98797 | 0.99942 |
+| TPR @ FPR 1e-3 | 96.91% | 99.73% |
+| accuracy at the shipped 0.38 | 98.19% | 99.60% |
+| TPR at the shipped 0.38 | 96.38% | 99.19% |
+| **impostors accepted at 0.38** | **0 of 2,977** | **0 of 2,977** |
+| worst same-person pair | −0.1527 | 0.0013 |
+| best impostor pair | 0.2425 | 0.2307 |
+
+Failure to enrol: 27 of 7,701 images, 0.35%, dropping 43 pairs.
+
+Two things are worth reading carefully here.
+
+The first is that **zero impostor pairs are accepted at 0.38** under either
+policy — 2,977 of them, none. That is an independent public dataset agreeing
+with the harvested calibration in [§5](#5--calibration--what-the-threshold-actually-costs)
+about the thing that matters most for a tool that puts a name to a stranger,
+and it is the reason the threshold is set well above the equal-error point.
+
+The second is where the 1.39-point gap comes from, because the first reading of
+it was wrong. It looks like the encoder falling short of ArcFace's published
+LFW accuracy, and it is not: 1,307 of 7,701 LFW images contain more than one
+face — up to ten — and on those the largest face is often a bystander. The
+tell was the worst same-person pair scoring **−0.1527**, which is not a hard
+pair, it is two different people. Selecting the centre face instead puts the
+same embeddings at 99.85%, which is ArcFace's published number. The deficit was
+the picking rule, not the model.
+
+That does not make `centre` simply better. LFW is *funneled* — the frames are
+aligned so the subject is centred — so the centre rule is being handed the
+answer by the dataset's own construction, and a benchmark's framing convention
+is not evidence about photographs in general. What the measurement establishes
+is narrower and more useful than "use centre": the encoder is at published
+accuracy, the shipped threshold does not accept impostors, and the subject rule
+is a real fork in the road with a measured cost rather than an implementation
+detail. Hence a flag, defaulting to the one that suits an arbitrary photograph,
+and a warning printed whenever it actually bites.
+
 ---
 
 ## Verifying, and proving that verification bites
@@ -854,6 +927,7 @@ searches for people by face; it has no business being reachable from off-box.
 | `sigil chain address` | — | show the submitter address and balance, deploying nothing |
 | `sigil calibrate` | — | measure what the threshold costs in false accepts and misses |
 | `sigil backends` | — | report which backends load, and what they run on |
+| `scripts/bench_lfw.py` | — | score the encoder on LFW, under both subject policies |
 
 `sigil run` accepts a local path or an `https://` URL, and exits `0` on a
 verified match, `2` when nothing cleared the threshold, `1` on a failed
@@ -862,9 +936,16 @@ verification — so it composes in a script.
 ## Configuration
 
 Everything is optional; see `.env.example`. The knobs that matter most:
-`SIGIL_FACE_BACKEND`, `SIGIL_THRESHOLD`, `SIGIL_MAX_IMAGES`, `SIGIL_CHAIN`,
-and `SIGIL_SUBJECT_SALT` (change it and previously anchored records stop
-verifying against new probes — pick one and keep it).
+`SIGIL_FACE_BACKEND`, `SIGIL_THRESHOLD`, `SIGIL_SUBJECT`, `SIGIL_MAX_IMAGES`,
+`SIGIL_CHAIN`, and `SIGIL_SUBJECT_SALT` (change it and previously anchored
+records stop verifying against new probes — pick one and keep it).
+
+`SIGIL_THRESHOLD` and `SIGIL_SUBJECT` are the two that refuse a value they
+cannot parse rather than falling back to the default. Every other knob here
+defaults quietly, because a malformed page size is not worth ending a run
+over. These two decide *whether* two faces are the same person and *which*
+face the run is about, and a quiet fallback on either produces a run that
+looks entirely normal while answering a question nobody asked.
 
 Two switches turn something *off* that is on for a reason, so they are worth
 naming here rather than leaving in the file:
@@ -885,11 +966,11 @@ naming here rather than leaving in the file:
 ## Tests
 
 ```bash
-pytest -m "not network"   # 640 offline tests, 97% line coverage
+pytest -m "not network"   # 657 offline tests, 97% line coverage
 pytest -m network         # 3 tests against the live API and a live chain
 ```
 
-Both installs collect the same **640 offline tests**. Every insightface gate in
+Both installs collect the same **657 offline tests**. Every insightface gate in
 the suite is a runtime skip inside a test body rather than a collection-time
 one, so the extra changes how many tests *run*, not how many exist. What the
 two installs differ on is the skip count and the last coverage point:
