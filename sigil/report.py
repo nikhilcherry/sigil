@@ -268,6 +268,34 @@ def no_match_panel(result, threshold: float) -> None:
     )
 
 
+def verification_receipt_panel(r: dict[str, Any]) -> None:
+    """The on-chain receipt for a check, kept visibly weaker than the checks.
+
+    It says a check happened at a time and what the registry answered. It says
+    nothing about whether the bundle verified - the contract holds a hash and
+    cannot see a bundle - so the wording here never borrows the language of the
+    panel above it.
+    """
+    t = Table.grid(padding=(0, 2))
+    t.add_column(style="dim", justify="right")
+    t.add_column()
+    t.add_row("evidence hash", q(r["evidence_hash"]))
+    t.add_row("registry held it",
+              "[bold green]yes[/bold green]" if r["anchored"] else "[bold red]no[/bold red]")
+    t.add_row("tx", q(r["tx_hash"]))
+    t.add_row("block", str(r["block_number"]))
+    t.add_row("gas used", f"{r['gas_used']:,}")
+    if r.get("explorer"):
+        t.add_row("explorer", q(r["explorer"]))
+    console.print(Panel(
+        t,
+        title="Check recorded on chain",
+        subtitle="[dim]this receipt attests that a check happened, "
+                 "not that the bundle is sound[/dim]",
+        border_style="magenta", expand=False,
+    ))
+
+
 def anchor_panel(a: dict[str, Any]) -> None:
     t = Table.grid(padding=(0, 2))
     t.add_column(style="dim", justify="right")

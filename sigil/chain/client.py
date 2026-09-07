@@ -254,6 +254,37 @@ class ChainClient:
             "explorer": self._explorer(tx_hex),
         }
 
+    def log_verification(self, evidence: Evidence) -> dict[str, Any]:
+        """Put the fact that this bundle was checked onto the chain.
+
+        Not part of `verify`, and not a default. An ordinary verification asks
+        `isAnchored`, which is a view call: free, instant, and leaving no
+        trace. That is the right shape for the common case, where the person
+        checking is the person who will act on the answer.
+
+        This is for the other case - where being able to prove *later* that you
+        checked, and what you were told, is itself the point. It costs gas and
+        writes a receipt nobody can subsequently edit, including whoever wrote
+        it. A miss is logged as readily as a hit: "that hash was not on this
+        registry at that time" is a real finding, and often the more useful one.
+        """
+        self.ensure_deployed()
+        ehash = evidence.evidence_hash()
+        receipt = self._send(self.contract.functions.logVerification(ehash))
+        tx_hash = receipt["transactionHash"]
+        tx_hex = tx_hash.hex() if hasattr(tx_hash, "hex") else str(tx_hash)
+        if not tx_hex.startswith("0x"):
+            tx_hex = "0x" + tx_hex
+        return {
+            "evidence_hash": "0x" + ehash.hex(),
+            "anchored": bool(self.contract.functions.isAnchored(ehash).call()),
+            "tx_hash": tx_hex,
+            "block_number": receipt["blockNumber"],
+            "gas_used": receipt["gasUsed"],
+            "chain_id": self.chain_id,
+            "explorer": self._explorer(tx_hex),
+        }
+
     def _explorer(self, tx_hex: str) -> str | None:
         if self.backend != "rpc":
             return None

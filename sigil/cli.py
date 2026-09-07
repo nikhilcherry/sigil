@@ -252,7 +252,10 @@ def anchor(evidence_path, chain_backend):
               help="Re-scan this face and confirm it is the one in the bundle.")
 @click.option("--recheck-source", is_flag=True,
               help="Re-download the matched post image and confirm its bytes are unchanged.")
-def verify(evidence_path, chain_backend, probe, recheck_source):
+@click.option("--log-on-chain", is_flag=True,
+              help="Also write a receipt saying this hash was checked. Costs gas; "
+                   "for when proving later that you looked is itself the point.")
+def verify(evidence_path, chain_backend, probe, recheck_source, log_on_chain):
     """Stage 5: recompute the hash locally and check it against chain state."""
     cfg = _cfg(chain_backend=chain_backend)
     ev = _load_evidence(evidence_path)
@@ -270,6 +273,12 @@ def verify(evidence_path, chain_backend, probe, recheck_source):
                           recheck_source=recheck_source,
                           probe_image_bytes=probe_bytes)
     report.verification_panel(v, title=f"Verification of {evidence_path.name}")
+    # After the panel, not instead of it: the receipt records that a check
+    # happened and what the registry said, which is a weaker claim than the six
+    # checks above and must not be read as standing in for them.
+    if log_on_chain:
+        with _chain_errors():
+            report.verification_receipt_panel(client.log_verification(ev))
     sys.exit(0 if v.ok else 1)
 
 

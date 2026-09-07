@@ -57,6 +57,42 @@ contract SigilRegistry {
         emit Anchored(evidenceHash, msg.sender, subjectRef, anchoredAt, similarityBps);
     }
 
+    /// @notice Emitted when someone puts a check of a record on the record.
+    /// @dev Deliberately says nothing about whether the *bundle* verified.
+    ///      This contract cannot see a bundle - it holds a hash - so the only
+    ///      honest claim it can log is "at this time, this address asked about
+    ///      this hash, and the registry did (or did not) hold it". The six
+    ///      checks in `sigil verify` are computed off-chain against the file.
+    event VerificationLogged(
+        bytes32 indexed evidenceHash,
+        address indexed checkedBy,
+        bool    anchored,
+        uint64  checkedAt
+    );
+
+    /// @notice Record that this hash was checked, and return what was found.
+    /// @dev `isAnchored` answers the same question for free, and that is the
+    ///      one a normal verify calls - which is why this is separate rather
+    ///      than folded into it. This one costs gas and exists for the case
+    ///      where the *checking* is the thing worth being able to prove later:
+    ///      an auditor who wants a timestamped, unforgeable trace that they
+    ///      looked and what they were told. A view function leaves no such
+    ///      trace, and a log kept off-chain would be one its own author could
+    ///      edit afterwards.
+    ///
+    ///      Never reverts on a miss. "That hash is not here" is a real and
+    ///      useful thing to have anchored - it is how a reader later
+    ///      establishes that a bundle did *not* exist at a given time - so it
+    ///      is returned and logged rather than thrown away as an error.
+    function logVerification(bytes32 evidenceHash)
+        external
+        returns (bool anchored, uint64 checkedAt)
+    {
+        anchored = _records[evidenceHash].anchoredAt != 0;
+        checkedAt = uint64(block.timestamp);
+        emit VerificationLogged(evidenceHash, msg.sender, anchored, checkedAt);
+    }
+
     /// @notice Fetch a record. Reverts when the hash was never anchored.
     function get(bytes32 evidenceHash) external view returns (Record memory) {
         Record memory r = _records[evidenceHash];

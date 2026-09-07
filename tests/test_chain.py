@@ -683,3 +683,92 @@ def test_every_listed_record_verifies_against_its_own_bundle(cfg, evidence):
     for b in bundles:
         assert b.evidence_hash_hex() in listed
         assert ChainClient(cfg).verify(b).ok
+
+
+# --------------------------------------------------- receipts for a check itself
+
+
+def test_logging_a_check_records_that_the_registry_held_the_hash(client, evidence):
+    client.anchor(evidence)
+    receipt = client.log_verification(evidence)
+
+    assert receipt["anchored"] is True
+    assert receipt["evidence_hash"] == evidence.evidence_hash_hex()
+    assert receipt["tx_hash"].startswith("0x")
+    assert receipt["gas_used"] > 0
+
+
+def test_a_miss_is_logged_rather_than_reverted(client, evidence):
+    """"That hash was not here at that time" is a finding worth anchoring.
+
+    Reverting would throw away the more useful of the two answers: it is how a
+    reader later establishes that a bundle did *not* exist when they looked.
+    """
+    receipt = client.log_verification(evidence)
+    assert receipt["anchored"] is False
+    assert receipt["tx_hash"].startswith("0x")
+
+
+def test_logging_a_check_does_not_anchor_anything(client, evidence):
+    """A receipt is not a record. Checking must not create what it checks for."""
+    client.log_verification(evidence)
+    assert client.total_anchored() == 0
+    assert client.verify(evidence).anchored is False
+
+
+def test_the_receipt_names_who_checked_and_what_they_were_told(client, evidence):
+    client.anchor(evidence)
+    before = client.total_anchored()
+    client.log_verification(evidence)
+
+    logs = client.contract.events.VerificationLogged().get_logs(from_block=0)
+    assert len(logs) == 1
+    args = logs[0]["args"]
+    assert args["evidenceHash"] == evidence.evidence_hash()
+    assert args["checkedBy"] == client.address
+    assert args["anchored"] is True
+    assert args["checkedAt"] > 0
+    assert client.total_anchored() == before
+
+
+def test_an_ordinary_verification_writes_nothing(client, evidence):
+    """The default path is a view call: free, instant, and leaving no trace.
+
+    Paying gas to answer a question anyone can ask for nothing would be the
+    wrong default, which is why the receipt is a separate, opt-in call.
+    """
+    client.anchor(evidence)
+    client.verify(evidence)
+    assert client.contract.events.VerificationLogged().get_logs(from_block=0) == []
+
+
+# ------------------------------------------------------------------------- gas
+#
+# Ceilings rather than exact figures: the point is to catch a change that makes
+# anchoring materially more expensive - an unbounded string finding its way
+# into the record, a loop over the enumeration array - not to re-pin a number
+# that moves with a solc release.
+
+
+def test_anchoring_costs_what_a_fixed_size_record_should(client, evidence):
+    receipt = client.anchor(evidence)
+    # Three storage slots written from zero (~20k each) plus the enumeration
+    # push and the event. Measured at ~114k; the ceiling leaves room for solc
+    # and a slot's worth of drift, and would still catch a string field or a
+    # loop being added to the record.
+    assert 60_000 < receipt["gas_used"] < 180_000
+
+
+def test_the_second_anchor_of_a_bundle_costs_nothing_at_all(client, evidence):
+    """The duplicate is refused by a view call before any transaction is sent."""
+    client.anchor(evidence)
+    again = client.anchor(evidence)
+    assert again["already_anchored"] is True
+    assert "gas_used" not in again
+
+
+def test_a_check_costs_much_less_than_a_record(client, evidence):
+    """It writes no storage - only an event - so it must not price like a write."""
+    anchored = client.anchor(evidence)
+    logged = client.log_verification(evidence)
+    assert logged["gas_used"] < anchored["gas_used"] / 2
