@@ -264,9 +264,9 @@ def test_the_subject_commitment_is_scoped_to_the_provider_not_just_the_face(
 # renamed, which is a schema change - and then SCHEMA in sigil/__init__.py has
 # to move too, and this vector is updated in the same commit that moves it.
 # Failing loudly is the whole point.
-GOLDEN_SCHEMA = "sigil/evidence/v3"
-GOLDEN_BYTES = 1140
-GOLDEN_HASH = "0xc9a63a787a43bb17c9cc19630a6ad6b9a69a4cc6b2416e9427bcf691e095011f"
+GOLDEN_SCHEMA = "sigil/evidence/v4"
+GOLDEN_BYTES = 1159
+GOLDEN_HASH = "0x6e3b4a19b9f450c63453249aba20892d592bd52aa9293d8a17622275da1e2119"
 GOLDEN_SUBJECT = "0xe6a4852f797e1005246089aba3e37c853555f5adcdcfd8fdd5b767a6dee20276"
 
 

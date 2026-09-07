@@ -153,6 +153,19 @@ class ChainClient:
         return self._recall("contract_address")
 
     def ensure_deployed(self) -> str:
+        # A deploy already made in this process is authoritative. On the rpc
+        # backend nothing persists the address between calls - `_remember`
+        # writes into the local chain's snapshot and there is no snapshot
+        # here - so `deployed_address()` keeps returning None and every call
+        # deploys a *second* identical registry. `sigil chain info` did
+        # exactly that on Polygon Amoy: one invocation, two deployments five
+        # blocks apart (0xEd733b74... then 0x55aFda49..., 318,609 gas each),
+        # and the record count it printed was read off the copy rather than
+        # off the contract named on the line above it. Masked on the local
+        # backend, where `_recall` does return the address - which is why
+        # test_chain's idempotence assertion passed throughout.
+        if self.contract is not None:
+            return self.contract.address
         addr = self.deployed_address()
         if addr and self._code_at(addr):
             self.contract = self.w3.eth.contract(
@@ -250,6 +263,37 @@ class ChainClient:
             "block_number": receipt["blockNumber"],
             "gas_used": receipt["gasUsed"],
             "contract": self.contract.address,
+            "chain_id": self.chain_id,
+            "explorer": self._explorer(tx_hex),
+        }
+
+    def log_verification(self, evidence: Evidence) -> dict[str, Any]:
+        """Put the fact that this bundle was checked onto the chain.
+
+        Not part of `verify`, and not a default. An ordinary verification asks
+        `isAnchored`, which is a view call: free, instant, and leaving no
+        trace. That is the right shape for the common case, where the person
+        checking is the person who will act on the answer.
+
+        This is for the other case - where being able to prove *later* that you
+        checked, and what you were told, is itself the point. It costs gas and
+        writes a receipt nobody can subsequently edit, including whoever wrote
+        it. A miss is logged as readily as a hit: "that hash was not on this
+        registry at that time" is a real finding, and often the more useful one.
+        """
+        self.ensure_deployed()
+        ehash = evidence.evidence_hash()
+        receipt = self._send(self.contract.functions.logVerification(ehash))
+        tx_hash = receipt["transactionHash"]
+        tx_hex = tx_hash.hex() if hasattr(tx_hash, "hex") else str(tx_hash)
+        if not tx_hex.startswith("0x"):
+            tx_hex = "0x" + tx_hex
+        return {
+            "evidence_hash": "0x" + ehash.hex(),
+            "anchored": bool(self.contract.functions.isAnchored(ehash).call()),
+            "tx_hash": tx_hex,
+            "block_number": receipt["blockNumber"],
+            "gas_used": receipt["gasUsed"],
             "chain_id": self.chain_id,
             "explorer": self._explorer(tx_hex),
         }

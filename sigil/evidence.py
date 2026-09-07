@@ -20,6 +20,7 @@ from typing import Any
 from eth_utils import keccak
 
 from . import SCHEMA
+from .canonical import normalize_text, normalize_url
 
 SUBJECT_DOMAIN = b"sigil:subject:v1"
 
@@ -46,6 +47,17 @@ class ProbeRef:
     # digest is provider-specific even though the embedding is, for every
     # practical purpose, the same - see the SCHEMA note in sigil/__init__.py.
     provider: str = ""
+    # How many faces the detector found in the probe, of which this bundle
+    # describes exactly one: the largest.
+    #
+    # Recorded because the selection is silent otherwise, and it decides the
+    # entire run. Hand this a photograph of three people and it searches for
+    # whichever face happens to occupy the most pixels - which may not be the
+    # one the operator meant, and nothing in the output would have said so. A
+    # bundle asserting "this face was found at that account" while the probe
+    # contained three faces is not wrong, but a reader cannot see the ambiguity
+    # unless the count travels with it.
+    faces_in_image: int = 1
 
 
 @dataclass
@@ -70,6 +82,23 @@ class MatchRef:
     claim: str = "identity"
     # "social" or "web" - which kind of arm found it. See sigil/search/base.py.
     source_kind: str = "web"
+
+    def __post_init__(self) -> None:
+        """Put every third-party string into one spelling before it is hashed.
+
+        Here rather than in `to_dict`, so that the object and its digest agree:
+        `sigil verify --recheck-source` refetches `image_url` off this record,
+        and a bundle whose stored URL differed from the one that was hashed
+        would verify differently depending on whether it had been through a
+        file. See sigil/canonical.py for what is normalised and, more to the
+        point, what is deliberately left alone.
+        """
+        self.post_url = normalize_url(self.post_url)
+        self.image_url = normalize_url(self.image_url)
+        self.post_uri = normalize_url(self.post_uri)
+        self.author_handle = normalize_text(self.author_handle)
+        self.author_display_name = normalize_text(self.author_display_name)
+        self.text = normalize_text(self.text)
 
 
 @dataclass

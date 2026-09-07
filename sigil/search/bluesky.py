@@ -86,25 +86,38 @@ class BlueskyProvider:
     # -- extraction ------------------------------------------------------
 
     @staticmethod
-    def _images_from_post(post: dict) -> list[str]:
+    def _images_from_post(post: dict) -> list[tuple[str, str]]:
+        """Every image in a post, as (full size, thumbnail).
+
+        Both, rather than the better one. An embed carries `fullsize` and
+        `thumb` for the same picture and the CDN serves them independently, so
+        the full-size URL can fail on its own - and collapsing the pair here
+        threw away the one piece of information that would have let the fetch
+        recover. The thumbnail is a fallback, never a preference: see
+        `matcher.upscale_for_detection` for what a smaller encode costs.
+        """
         embed = post.get("embed") or {}
         images = embed.get("images") or []
         media = embed.get("media") or {}
         images = images or media.get("images") or []
-        urls = [i.get("fullsize") or i.get("thumb") for i in images]
-        if not urls and embed.get("thumbnail"):
-            urls = [embed["thumbnail"]]
-        return [u for u in urls if u]
+        pairs = [
+            (i.get("fullsize") or i.get("thumb") or "", i.get("thumb") or "")
+            for i in images
+        ]
+        if not pairs and embed.get("thumbnail"):
+            pairs = [(embed["thumbnail"], "")]
+        return [(full, thumb if thumb != full else "") for full, thumb in pairs if full]
 
     def _candidates_from_post(self, post: dict) -> Iterator[Candidate]:
         author = post.get("author") or {}
         handle = author.get("handle", "")
         record = post.get("record") or {}
-        for url in self._images_from_post(post):
+        for url, thumb in self._images_from_post(post):
             yield Candidate(
                 platform="bluesky",
                 source_kind=self.kind,
                 image_url=url,
+                thumbnail_url=thumb,
                 post_url=at_uri_to_web_url(post.get("uri", ""), handle),
                 post_uri=post.get("uri", ""),
                 author_handle=handle,

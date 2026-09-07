@@ -9,11 +9,13 @@ and the face model is the judge.
 from __future__ import annotations
 
 import itertools
+import threading
 from collections.abc import Callable, Iterable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
 
+import cv2
 import numpy as np
 
 from ..concurrency import prefetch
@@ -23,6 +25,7 @@ from ..face import Face, cosine, decode_image
 from ..provenance import IDENTITY, claim_for, fingerprint, photo_similarity
 from .base import Candidate, SearchProvider
 from .http import fetch_image, make_session
+from .safety import is_safe
 
 # How many candidate images to download at once. Two values, because the right
 # one depends on which half of the run is the slow half.
@@ -46,6 +49,11 @@ GPU_DOWNLOAD_WORKERS = 16
 # that keeps the encoder from ever waiting on the network.
 PREFETCH_FACTOR = 3
 PREFETCH = DOWNLOAD_WORKERS * PREFETCH_FACTOR
+
+# Candidate images smaller than this on their longest side are enlarged to it
+# before the encoder sees them. Measured, and measured to be a floor rather
+# than a target - see upscale_for_detection.
+DETECT_MIN_DIM = 320
 
 
 def download_workers(encoder, cfg: Config) -> int:
@@ -86,10 +94,44 @@ class MatchResult:
     images_with_faces: int = 0
     faces_examined: int = 0
     inference_reused: int = 0
+    # Candidates refused before download - see search/safety.py. Counted rather
+    # than dropped silently: "nothing was found" and "everything found was a
+    # scraper site" are different answers, and only one of them means the
+    # search failed.
+    blocked_unsafe: int = 0
+    blocked_by_category: dict[str, int] = field(default_factory=dict)
+    # Candidates whose full-size image would not come and whose thumbnail did.
+    thumbnail_fallbacks: int = 0
 
     @property
     def found(self) -> bool:
         return self.best is not None
+
+    @property
+    def outcome(self) -> str:
+        """One word for how the search ended, for a caller that has to branch.
+
+        "No match" is four different situations with four different fixes, and
+        collapsing them costs the operator the one piece of information they
+        need. A query that returned nothing wants different search terms; a
+        run where every image had no face in it wants a different arm; a run
+        where everything was refused wants nothing at all, because refusing was
+        correct; and a best candidate at 0.31 against a 0.38 threshold is the
+        only one of the four where the tool worked exactly as intended and the
+        answer is "that is not the same person".
+
+        The prose panels say this too. This exists so the web UI and any
+        program driving the pipeline do not have to parse the prose.
+        """
+        if self.best is not None:
+            return "MATCH"
+        if self.images_examined == 0:
+            if self.blocked_unsafe:
+                return "ALL_CANDIDATES_REFUSED"
+            return "NO_CANDIDATES"
+        if self.images_with_faces == 0:
+            return "NO_FACES_IN_CANDIDATES"
+        return "BELOW_THRESHOLD"
 
 
 def _dedup(it: Iterable[Candidate]) -> Iterator[Candidate]:
@@ -99,6 +141,48 @@ def _dedup(it: Iterable[Candidate]) -> Iterator[Candidate]:
             continue
         seen.add(c.image_url)
         yield c
+
+
+def screen(
+    it: Iterable[Candidate],
+    result: MatchResult,
+    allow_unsafe: bool = False,
+    on_event: Callable[[dict[str, Any]], None] | None = None,
+) -> Iterator[Candidate]:
+    """Drop candidates this tool refuses to download or cite.
+
+    What gets refused and why is `search/safety.py`; this is only where it sits
+    in the stream, and where it sits is the part that is easy to get wrong.
+
+    Ahead of the `max_images` truncation, deliberately. A face query against an
+    open-web index routinely returns a page of adult scraper results, and
+    screening *after* the budget would let those consume the slots - so the run
+    would examine forty things it refused to look at and report that it found
+    nothing, while the arm that had a real answer never advanced. The same
+    reasoning as `interleave`: a budget spent on candidates that cannot
+    contribute is a search that claims coverage it does not have.
+
+    Ahead of the *download*, equally deliberately. The alternative is to fetch
+    the bytes and discard them, which means this process has requested the
+    image from that host, and on some of these hosts that request is itself the
+    thing worth not doing.
+
+    The event carries the category and the running count, never the URL or the
+    host. A blocked candidate that gets echoed to the terminal or the UI has
+    defeated most of the point of blocking it.
+    """
+    for c in it:
+        verdict = is_safe(c)
+        if allow_unsafe or verdict.allowed:
+            yield c
+            continue
+        result.blocked_unsafe += 1
+        result.blocked_by_category[verdict.category] = (
+            result.blocked_by_category.get(verdict.category, 0) + 1
+        )
+        if on_event:
+            on_event({"type": "blocked", "category": verdict.category,
+                      "total": result.blocked_unsafe})
 
 
 def interleave(
@@ -142,6 +226,49 @@ def interleave(
                     on_error(_name, exc)
 
 
+def upscale_for_detection(img: np.ndarray) -> tuple[np.ndarray, float]:
+    """Enlarge a very small candidate image before it is encoded.
+
+    The usual justification for this is "so the detector can see the face",
+    and that justification is wrong. Measured against a synthetic scene where
+    the face occupies about a third of the frame, both detectors find it down
+    to a 42-pixel face in a 120px-wide thumbnail with nothing done to it. What
+    changes is not detection but *recognition*: ArcFace and SFace are both
+    resolution-sensitive, and the vector they produce from a tiny crop is a
+    worse likeness of the same face.
+
+    Cosine against the full-resolution encoding of the same person, raw and
+    upscaled to 320:
+
+        thumb width   face px   opencv raw -> up    insight raw -> up
+             120         42       0.2907  0.5834      0.5458  0.5853
+             150         52       0.6068  0.6681      0.6972  0.6651
+             200         70       0.7849  0.7944      0.8224  0.8230
+             250         87       0.8291  0.8773      0.8964  0.9078
+             400        140       0.9406  0.9324      0.9621  0.9539
+
+    Two things follow, and both are in the rule below. It is worth doing at
+    the small end - the 120px row on opencv goes from 0.2907 to 0.5834, which
+    is a match that was below the 0.363 threshold and is now well above it, so
+    a real candidate stops being discarded. And it is worth *not* doing above
+    that: the 400px row loses ground on both backends, because resampling an
+    image that already has enough pixels only invents some. So the floor is a
+    floor, not a target - an image at or above it is passed through untouched.
+
+    Returns the image to detect on and the scale applied, since bounding boxes
+    come back in the enlarged image's coordinates and have to be reported in
+    the original's.
+    """
+    h, w = img.shape[:2]
+    longest = max(h, w)
+    if longest <= 0 or longest >= DETECT_MIN_DIM:
+        return img, 1.0
+    scale = DETECT_MIN_DIM / longest
+    resized = cv2.resize(img, (max(1, round(w * scale)), max(1, round(h * scale))),
+                         interpolation=cv2.INTER_LANCZOS4)
+    return resized, scale
+
+
 def score_image(
     encoder, probe: Face, image_bytes: bytes,
     probe_fingerprint: np.ndarray | None = None,
@@ -154,9 +281,15 @@ def score_image(
     img = decode_image(image_bytes)
     if img is None:
         return -1.0, 0, [], 0.0
+    # The fingerprint is taken from the image as it arrived, before any
+    # upscaling. It is meant to answer "is this the probe's own photograph",
+    # and it does that by reducing to 32x32 - so resampling first would be
+    # comparing the probe against something this code made up. The detector
+    # gets the enlarged copy; the provenance judgement gets the real one.
     photo = (photo_similarity(probe_fingerprint, fingerprint(img))
              if probe_fingerprint is not None else 0.0)
-    faces = encoder.detect_and_encode(img)
+    detect_img, scale = upscale_for_detection(img)
+    faces = encoder.detect_and_encode(detect_img)
     if not faces:
         return -1.0, 0, [], photo
     best_sim, best_box = -1.0, []
@@ -164,6 +297,8 @@ def score_image(
         sim = cosine(probe.embedding, f.embedding)
         if sim > best_sim:
             best_sim, best_box = sim, f.bbox
+    if scale != 1.0 and best_box:
+        best_box = [round(v / scale) for v in best_box]
     return best_sim, len(faces), best_box, photo
 
 
@@ -214,10 +349,34 @@ def search_and_match(
     stream = _dedup(interleave(
         [(p.name, p.candidates(query)) for p in providers], on_error=arm_failed
     ))
+    stream = screen(stream, result, getattr(cfg, "allow_unsafe", False), on_event)
     stream = itertools.islice(stream, cfg.max_images)
 
+    # `fetch` runs on the download pool, so the counter it increments is
+    # touched from several threads at once. `+= 1` on an int is a read and a
+    # write with a bytecode boundary between them, and CPython is free to
+    # switch threads there - so this is a lock rather than a bare increment.
+    # The contention is nil: it is held for one addition, on the rare path.
+    fallback_lock = threading.Lock()
+
     def fetch(c: Candidate) -> bytes | None:
-        return fetch_image(session, c.image_url, cfg.http_timeout)
+        """The full-size image, or the arm's thumbnail when that one will not come.
+
+        Full size first, always. The thumbnail is a worse encode of the same
+        picture - upscale_for_detection has the numbers - so it is what to fall
+        back to, never what to prefer. But a candidate whose full-size URL 403s
+        or has expired is otherwise dropped entirely, and dropping a genuine
+        match over a stale CDN link is a worse error than scoring it from a
+        smaller copy.
+        """
+        blob = fetch_image(session, c.image_url, cfg.http_timeout)
+        thumb = getattr(c, "thumbnail_url", "")
+        if blob is None and thumb and thumb != c.image_url:
+            blob = fetch_image(session, thumb, cfg.http_timeout)
+            if blob is not None:
+                with fallback_lock:
+                    result.thumbnail_fallbacks += 1
+        return blob
 
     # A cheap pre-filter here does not pay, and it looks like it should.
     # Measured over two real candidate corpora (285 and 244 images), only 22%
@@ -335,6 +494,20 @@ def search_and_match(
     result.trace = [
         {"provider": p.name, "calls": p.trace.calls} for p in providers if hasattr(p, "trace")
     ]
+    # The screen goes into the trace for the same reason the providers do: the
+    # bundle should record what the run actually did, and "23 candidates were
+    # refused before download" is part of that. Counts by category only - the
+    # hosts themselves must not be written into a bundle that gets hashed onto
+    # a public chain.
+    if result.blocked_unsafe:
+        result.trace.append({
+            "provider": "safety",
+            "calls": [{
+                "endpoint": "screen",
+                "params": {"categories": dict(sorted(result.blocked_by_category.items()))},
+                "results": result.blocked_unsafe,
+            }],
+        })
     return result
 
 

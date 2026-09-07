@@ -46,6 +46,14 @@ def probe_panel(ref, path: str) -> None:
                          + (f" [dim]on {ref.provider.replace('ExecutionProvider', '')}"
                             f"[/dim]" if ref.provider else ""))
     t.add_row("face bbox", str(ref.bbox))
+    # Only when there was a choice to make. On one face this row would say
+    # "1" on every run and stop being read, which is the state you do not want
+    # it in on the run where it says 4.
+    faces = getattr(ref, "faces_in_image", 1)
+    if faces > 1:
+        t.add_row("faces in image",
+                  f"[yellow]{faces}[/yellow] [dim]- the largest was used; "
+                  f"crop to choose another[/dim]")
     t.add_row("detector score", f"{ref.det_score:.4f}")
     t.add_row("image sha256", ref.image_sha256)
     t.add_row("embedding sha256", ref.embedding_sha256)
@@ -65,6 +73,14 @@ def search_panel(result, threshold: float, providers: list[str]) -> None:
     t.add_row("faces compared", str(result.faces_examined))
     if getattr(result, "inference_reused", 0):
         t.add_row("duplicate images", f"{result.inference_reused} (score reused)")
+    # Only when it happened. A permanent "refused 0" row would train a reader
+    # to skip the line that matters on the run where it is not zero.
+    if getattr(result, "blocked_unsafe", 0):
+        by = getattr(result, "blocked_by_category", {}) or {}
+        detail = ", ".join(f"{k} {v}" for k, v in sorted(by.items()))
+        t.add_row("refused before download",
+                  f"[yellow]{result.blocked_unsafe}[/yellow]"
+                  + (f" [dim]({q(detail)})[/dim]" if detail else ""))
     t.add_row("threshold", f"{threshold:.3f} cosine")
     calls = sum(len(p["calls"]) for p in result.trace)
     t.add_row("live API calls", str(calls))
@@ -222,11 +238,26 @@ def _measured_rates(evidence):
 
 def no_match_panel(result, threshold: float) -> None:
     top = result.ranked[0].similarity if result.ranked else 0.0
+    # "Nothing matched" and "everything found was refused before it could be
+    # matched" are different findings and the second one has a different fix,
+    # so the panel says which one happened rather than leaving the operator to
+    # widen a query that was never the problem.
+    blocked = getattr(result, "blocked_unsafe", 0)
+    refused = (
+        f"\n[yellow]{blocked}[/yellow] further candidates were refused before "
+        "download by the safety screen"
+        + (" - this run examined none of them.\n" if not result.images_examined
+           else ".\n")
+        if blocked else ""
+    )
     console.print(
         Panel(
+            f"[dim]outcome[/dim] [bold]{getattr(result, 'outcome', 'BELOW_THRESHOLD')}"
+            f"[/bold]\n"
             f"No candidate cleared the {threshold:.3f} threshold.\n"
             f"Best similarity seen: [yellow]{top:.4f}[/yellow] across "
-            f"{result.images_examined} images.\n\n"
+            f"{result.images_examined} images.\n"
+            f"{refused}\n"
             "[dim]Nothing is anchored when nothing matched - that is the point. "
             "Try a broader --query, raise --max-images, or use a probe photo of "
             "someone with a public presence on the platform.[/dim]",
@@ -235,6 +266,34 @@ def no_match_panel(result, threshold: float) -> None:
             expand=False,
         )
     )
+
+
+def verification_receipt_panel(r: dict[str, Any]) -> None:
+    """The on-chain receipt for a check, kept visibly weaker than the checks.
+
+    It says a check happened at a time and what the registry answered. It says
+    nothing about whether the bundle verified - the contract holds a hash and
+    cannot see a bundle - so the wording here never borrows the language of the
+    panel above it.
+    """
+    t = Table.grid(padding=(0, 2))
+    t.add_column(style="dim", justify="right")
+    t.add_column()
+    t.add_row("evidence hash", q(r["evidence_hash"]))
+    t.add_row("registry held it",
+              "[bold green]yes[/bold green]" if r["anchored"] else "[bold red]no[/bold red]")
+    t.add_row("tx", q(r["tx_hash"]))
+    t.add_row("block", str(r["block_number"]))
+    t.add_row("gas used", f"{r['gas_used']:,}")
+    if r.get("explorer"):
+        t.add_row("explorer", q(r["explorer"]))
+    console.print(Panel(
+        t,
+        title="Check recorded on chain",
+        subtitle="[dim]this receipt attests that a check happened, "
+                 "not that the bundle is sound[/dim]",
+        border_style="magenta", expand=False,
+    ))
 
 
 def anchor_panel(a: dict[str, Any]) -> None:

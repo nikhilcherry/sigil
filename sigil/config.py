@@ -80,6 +80,23 @@ class Config:
     download_workers: int = field(
         default_factory=lambda: _env_int("SIGIL_DOWNLOAD_WORKERS", 0)
     )
+    # Look at candidates the safety screen refuses. Off by default, and the
+    # default is the interesting half: a cleared candidate becomes a citation
+    # in a bundle that is hashed onto an append-only ledger, so the cost of
+    # anchoring an adult-scraper or leak-site URL is permanent and cannot be
+    # withdrawn. See search/safety.py.
+    allow_unsafe: bool = field(
+        default_factory=lambda: os.getenv("SIGIL_ALLOW_UNSAFE", "").strip().lower()
+        in ("1", "true", "yes", "on")
+    )
+    # Upload the probe to a temporary public host so the Lens arm can be asked
+    # about a local file at all. Off by default because of what it is - putting
+    # a photograph of somebody's face on a public URL - rather than because it
+    # is slow. See search/publish.py.
+    publish_probe: bool = field(
+        default_factory=lambda: os.getenv("SIGIL_PUBLISH_PROBE", "").strip().lower()
+        in ("1", "true", "yes", "on")
+    )
     bluesky_handle: str | None = field(default_factory=lambda: os.getenv("BLUESKY_HANDLE"))
     bluesky_app_password: str | None = field(
         default_factory=lambda: os.getenv("BLUESKY_APP_PASSWORD")

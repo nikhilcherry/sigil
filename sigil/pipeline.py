@@ -18,6 +18,7 @@ from .search import (
     GoogleVisionProvider,
     SearchProvider,
     SerpApiLensProvider,
+    publish,
 )
 from .search.matcher import MatchResult, search_and_match
 
@@ -81,6 +82,7 @@ def scan_probe(image_bytes: bytes, cfg: Config) -> tuple[Face, ProbeRef, Any]:
         bbox=face.bbox,
         det_score=round(face.det_score, 4),
         provider=getattr(encoder, "provider", ""),
+        faces_in_image=len(faces),
     )
     return face, ref, encoder
 
@@ -158,8 +160,19 @@ def run_pipeline(
         "image_sha256": probe_ref.image_sha256,
         "embedding_sha256": probe_ref.embedding_sha256,
         "threshold": threshold,
+        "faces_in_image": probe_ref.faces_in_image,
         "crop": face_crop_data_uri(image_bytes, probe_ref.bbox),
     })
+    # Said out loud, not merely recorded. Everything after this point is about
+    # one face, and which one was chosen by pixel area rather than by anything
+    # the operator asked for - so on a group photograph the entire run can be
+    # about the wrong person while every number in the output looks healthy.
+    if probe_ref.faces_in_image > 1:
+        emit({
+            "type": "multiface",
+            "faces": probe_ref.faces_in_image,
+            "bbox": probe_ref.bbox,
+        })
     emit({"type": "stage", "stage": "scan", "status": "done"})
 
     # No query supplied means "you tell me who this is" - the whole point of
@@ -180,6 +193,13 @@ def run_pipeline(
         emit({"type": "query", "query": query, "derived": False, "alternatives": []})
 
     emit({"type": "stage", "stage": "search", "status": "start"})
+    # A local file cannot be handed to Lens, which matches on a URL. Publishing
+    # it to a temporary host closes that, and is off unless asked for: it puts
+    # a photograph of the subject's face on a public URL, which is a disclosure
+    # to make deliberately rather than because a key was in the environment.
+    if probe_url is None and publish.enabled_for(cfg):
+        probe_url = publish.publish_probe(image_bytes, cfg)
+        emit({"type": "published", "url": probe_url, "expires": publish.EXPIRY})
     providers = build_providers(cfg, probe_url, image_bytes)
     emit({"type": "providers", "providers": [p.name for p in providers]})
     match = search_and_match(
@@ -203,8 +223,12 @@ def run_pipeline(
     if not match.found:
         emit({
             "type": "nomatch",
+            # Four situations wear this label and they have four different
+            # fixes - see MatchResult.outcome.
+            "outcome": match.outcome,
             "best": round(match.ranked[0].similarity, 4) if match.ranked else 0.0,
             "examined": match.images_examined,
+            "refused": match.blocked_unsafe,
             "threshold": threshold,
         })
         emit({"type": "done", "found": False})

@@ -574,7 +574,16 @@ REVIEWED_SAFE_INTERPOLATIONS = {
     "h.similarity.toFixed(4)",
     "x.similarity.toFixed(3)",
     "e.examined",
+    # Counts this project computes. `faces` is len() of the detector's output
+    # and `refused` is an integer counter in the matcher - neither passes
+    # through a provider, so neither can carry a third party's markup.
+    "e.faces",
+    "e.refused",
+    # A fragment built two lines above out of `e.refused` and literals in this
+    # file; its <br> is the markup, deliberately.
+    "refused",
     # Ternaries over string literals this file owns end to end.
+    'e.refused === 1 ? " was" : "s were"',
     'copy ? "copy" : ""',
     'h.accepted ? "ok" : ""',
     'mine ? "anchored" : ""',
@@ -714,3 +723,32 @@ def test_reaping_leaves_a_run_that_is_still_going(monkeypatch):
 def test_reaping_an_empty_table_is_a_no_op(monkeypatch):
     monkeypatch.setattr(web, "JOBS", {})
     assert web._reap_finished_jobs() == 0
+
+
+def test_every_event_the_pipeline_emits_has_a_handler_in_the_page():
+    """A new signal that the UI silently drops is worse than one that is absent.
+
+    The server forwards whatever the pipeline queues, so an event type added in
+    sigil/pipeline.py with no matching case here just vanishes: the run looks
+    healthy and the page never mentions that the probe had four faces in it, or
+    that twenty candidates were refused.
+    """
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    html = (root / "sigil" / "web" / "index.html").read_text()
+    handled = set(re.findall(r'case\s+"([a-z_]+)"\s*:', html))
+
+    emitted = set()
+    for name in ("pipeline.py", "search/matcher.py"):
+        source = (root / "sigil" / name).read_text()
+        emitted |= set(re.findall(r'"type":\s*"([a-z_]+)"', source))
+
+    # "error" the page does handle. "done" it deliberately does not: the
+    # stream's own `event: end` frame is what closes the run out, and the
+    # server sends that whether the pipeline finished or died.
+    exempt = {"error", "done"}
+    assert not (emitted - handled - exempt), (
+        f"the page has no case for {sorted(emitted - handled - exempt)}"
+    )

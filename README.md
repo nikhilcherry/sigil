@@ -38,8 +38,11 @@ outcome rather than a failure.
 | Face → name | local index harvested from Wikipedia pageviews → Wikidata `P31=Q5` → Commons portraits | [`sigil/identify.py`](sigil/identify.py) · [§2](#2--identification--turning-a-face-into-a-name) |
 | Live social search | anonymous AT Protocol (`searchActors`, `getAuthorFeed`); Google Cloud Vision web detection and Google Lens when configured | [`sigil/search/`](sigil/search/) · [§3](#3--web--social-search) |
 | Evidence weighting | whole-image fingerprint separates *this photo again* from *another photo of that face*; social sources outrank open-web ones | [`sigil/provenance.py`](sigil/provenance.py) · [§3](#3--web--social-search) |
+| Candidate screening | adult and leak-site sources refused before download, so nothing of the kind is fetched, shown, or cited on chain | [`sigil/search/safety.py`](sigil/search/safety.py) · [§3](#3--web--social-search) |
+| Canonical strings | one spelling per source, so one finding is one hash | [`sigil/canonical.py`](sigil/canonical.py) · [§4](#4--blockchain-verification) |
 | Blockchain record | keccak256 over a canonical evidence bundle → append-only Solidity registry, on a persisted local py-evm chain or any EVM node | [`contracts/SigilRegistry.sol`](contracts/SigilRegistry.sol) · [§4](#4--blockchain-verification) |
 | Re-verification | recompute the hash and check it against chain state, not against a log | `sigil verify` · [below](#verifying-and-proving-that-verification-bites) |
+| Independent check | a second implementation of the digest — its own Keccak-256, no sigil imports, no dependencies at all | [`tools/verify_bundle.py`](tools/verify_bundle.py) · [below](#verifying-without-sigil) |
 | Threshold calibration | 6.4 M real impostor pairs against genuine pairs harvested across language Wikipedias | [`sigil/calibrate.py`](sigil/calibrate.py) · [§5](#5--calibration--what-the-threshold-actually-costs) |
 
 The whole sequence, end to end, is `./scripts/demo.sh`.
@@ -231,13 +234,14 @@ example images:
 Both backends find the same live match on a clean clone, so the fallback is a
 real alternative rather than a degraded mode. Verified from an actual fresh
 clone of `main` on 2026-09-03, with no API keys in the environment and the
-insightface extra not installed: `pip install -e ".[dev]"`,
-`./scripts/fetch_models.sh`, then all **508 offline tests** collected and 500
-green at 96% coverage — above the 95% floor its own CI enforces, the eight
-skips being the insightface backend that install does not have — and the
-documented quickstart matched `@aoc.bsky.social` at 0.7411 against the opencv
-threshold of 0.363, picture-vs-probe 0.0728, so a genuinely different
-photograph, anchored at 114,222 gas.
+insightface extra not installed — `pip install -e ".[dev]"`,
+`./scripts/fetch_models.sh` — where the documented quickstart matched
+`@aoc.bsky.social` at 0.7411 against the opencv threshold of 0.363,
+picture-vs-probe 0.0728, so a genuinely different photograph, anchored at
+114,222 gas. That clone's suite was green at 96% coverage, above the 95% floor
+its own CI enforces; the current figures for that same keyless install are in
+[Tests](#tests), and the live numbers above are left as what they were on the
+day rather than restated as though they had been measured again.
 
 `./scripts/demo.sh` then ran end to end on that clone in **32-35 seconds**
 (three consecutive runs: 35 s cold, then 32 s twice) with no tracebacks: it
@@ -424,6 +428,60 @@ Every network call is recorded into the evidence bundle's `search_trace` — the
 endpoints hit, the parameters sent, and the result counts — so a run can be
 audited after the fact rather than taken on trust.
 
+#### The candidates this refuses to look at
+
+A face query against an open-web index returns a predictable class of result:
+adult tube sites, "leaked nudes" aggregators, and the scraper networks that
+republish both. Scoring those like anything else goes wrong twice.
+
+The first way is what ends up on screen, in a tool meant to be demonstrated in
+front of people. The second is the one that actually matters. A cleared
+candidate becomes the *citation in an evidence bundle*, and that bundle is
+hashed onto an append-only registry — so anchoring a record whose `post_url`
+points at a nonconsensual-imagery site publishes a permanent, unrevocable
+association between a person's face and that site. That is a considerably worse
+outcome than the run finding nothing, and the registry cannot be edited
+afterwards, so the refusal happens before the anchor rather than after somebody
+notices.
+
+[`sigil/search/safety.py`](sigil/search/safety.py) screens each candidate
+before it is downloaded — ahead of the `--max-images` budget, so refused
+sources cannot starve the arms that had a real answer, and ahead of the fetch,
+because on some of these hosts the request is itself the thing worth not
+making. Hosts match on domain suffix; keywords match the URL path, the handle
+and the display name after **tokenisation**, which is the whole design:
+
+> A substring scan is the obvious implementation. It blocks Sussex, Essex,
+> Middlesex, passport, class, Cassidy, Scunthorpe and Leaksville, and it does
+> it invisibly, because no adult-content test case would think to contain those
+> strings. `tests/test_safety.py` asserts both halves — that the bad ones are
+> refused, and that none of those are.
+
+Post *text* is deliberately not scanned. A word in a post is not what makes a
+source unsafe, and refusing on it discards a true match while reporting "not
+found" — a failure indistinguishable from the search simply not having worked.
+The source is judged by where it is, not by what it says.
+
+What travels into the bundle is a count by category. The hosts themselves never
+do: the search trace is hashed onto a public chain, and the name of the site it
+saw is exactly the string that must not be written there. `--allow-unsafe`
+turns the screen off for an operator who has a reason and is accepting the
+consequence knowingly.
+
+None of this is a claim to have solved the problem. A blocklist is a list, and
+the sites on it rename themselves.
+
+#### When there is no match, which no-match it was
+
+"No match" is four situations with four different fixes, and collapsing them
+costs the operator the one thing they need. The bundle-less outcome is named
+rather than described — `NO_CANDIDATES`, `ALL_CANDIDATES_REFUSED`,
+`NO_FACES_IN_CANDIDATES`, `BELOW_THRESHOLD` — in the terminal, in the web UI,
+and in the pipeline's event stream, so a program driving this does not have to
+parse prose. Only the last of those means the tool worked exactly as intended
+and the answer is "that is not the same person"; only the third-to-last means
+there is nothing to fix at all.
+
 ### 4 · Blockchain verification
 
 `contracts/SigilRegistry.sol` is a small append-only registry:
@@ -485,22 +543,49 @@ warm, not anything about the evidence. The run prints a block-explorer link for
 the transaction.
 
 Two notes from actually testing this. First, `rpc-amoy.polygon.technology` — the
-endpoint most guides cite — was unreachable during development;
+endpoint most guides cite — is unreachable from here;
 `polygon-amoy-bor-rpc.publicnode.com` and `polygon-amoy.drpc.org` both work
-(chain id 80002). Second, the RPC path here has been exercised end to end
-against a live Amoy node up to the point of funding, and re-checked against it
-on 2026-09-03: `sigil chain address --chain rpc` connects, reports chain id
-80002, derives the address and reads its balance without deploying anything,
-and `sigil chain info` then refuses with
+(chain id 80002). Second, an unfunded key fails with a message rather than a
+web3 traceback, and exits 1 so a script can act on it:
 
 ```
 Error: 0x0b86bB… has no funds on chain 80002. Fund it from a testnet faucet
 (`sigil chain address` shows the address and its balance), or use SIGIL_CHAIN=local.
 ```
 
-— a message rather than a web3 traceback, exiting 1 so a script can act on it.
-Fund a throwaway address from an Amoy faucet and it deploys for real. That is
-the only step that needs a human.
+#### The live record on Polygon Amoy
+
+Funding a throwaway address from a faucet is the only step that needs a human.
+That was done on 2026-09-07, so the RPC path is no longer exercised only up to
+the point of funding — every figure here is a link a reader can open instead of
+a claim to take on trust:
+
+| | |
+|---|---|
+| registry | [`0xEd733b7493cd9ed9FdD60BD4fB85d8a8c21fB39e`](https://amoy.polygonscan.com/address/0xEd733b7493cd9ed9FdD60BD4fB85d8a8c21fB39e) |
+| deployed | [block 46,969,790](https://amoy.polygonscan.com/tx/0x032e5340b0fab5345e58e1ad2043264dd3a1bba47ba8b17690390602e89a8b6d) · 318,609 gas · 2026-09-07 13:37:12 UTC |
+| anchored | [block 46,970,130](https://amoy.polygonscan.com/tx/0x339f45700a6a1e13c6a09c0e8f9b5fcd12a5f9864aa15832b55446834adde016) · 122,622 gas · 2026-09-07 13:42:52 UTC |
+| submitter | `0x95B646874CdF7AA7166087F111B0bAF146263Bda` |
+| evidence hash | `0x69417151dae76d54702b46976c01866216c68569c8a2afb2ce3dc722e512388d` |
+| what was anchored | `@aoc.bsky.social`, similarity **0.7598** against a 0.380 threshold, photo-similarity 0.0213 — a different photograph of the same face, not a republication of the probe |
+
+The bundle that hash covers is 2,255 canonical bytes of `sigil/evidence/v4`. A
+later, separate process then read the record back out of Amoy state —
+
+```bash
+sigil verify --chain rpc --probe examples/probe-aoc.jpg --recheck-source
+```
+
+— and passed all six checks: record on chain, similarity matches, subject
+commitment, probe re-encodes, source image intact, claim re-derives.
+
+That anchor cost 122,622 gas against the 114,222 quoted above, which is the
+local chain's figure for a first record. The two were measured on different
+chains and different evidence schemas, and the gap is not accounted for here.
+
+**Pin `SIGIL_CONTRACT` to the deployed address.** Until it is set there is
+nothing to recall the address from on the rpc backend, so each command deploys
+its own registry — see the note on `ensure_deployed`.
 
 ### 5 · Calibration — what the threshold actually costs
 
@@ -694,6 +779,46 @@ The web UI has the same two buttons. Tampering there marks every differing
 nibble of the digest in red, which makes the avalanche visible: edit one
 character of a post's text and essentially the whole hash changes.
 
+### Verifying without sigil
+
+Everywhere above, the evidence hash comes out of `eth_utils.keccak` through
+`sigil.evidence` — so "the hash is right" has meant "sigil agrees with itself",
+which is the exact shape of claim this project refuses to accept about a face
+match.
+
+[`tools/verify_bundle.py`](tools/verify_bundle.py) is a second implementation:
+its own Keccak-256 written from the specification, its own canonical
+serialisation, no sigil imports and no third-party imports at all.
+
+```bash
+$ python3 tools/verify_bundle.py artifacts/evidence.json --expect 0x6e3b4a19…
+MATCH
+```
+
+Two independent implementations agreeing makes the digest a property of the
+*bundle* rather than of the code that produced it, and
+`tests/test_independent_verifier.py` is that agreement — on the golden bundle,
+on random inputs, and across the 135/136/137-byte rate boundary, which is the
+only place a padding or rate mistake shows. One test pins that it is Keccak and
+not SHA3: those differ in a single padding byte, and getting it wrong yields a
+tool that agrees with `hashlib` and disagrees with every Ethereum contract.
+
+It also answers a practical question this project had no answer to. Someone
+handed a bundle and a transaction hash should not have to install a
+face-recognition stack to check that the two correspond. The canonical form is
+written out in that file's docstring as a specification, so a third
+implementation need not read either of the first two.
+
+**Putting the check itself on the record.** An ordinary `sigil verify` asks the
+registry a view question: free, instant, and leaving no trace. Where being able
+to prove *later* that you looked — and what you were told — is itself the
+point, `sigil verify --log-on-chain` writes a receipt that nobody, including
+its author, can edit afterwards. A miss is logged as readily as a hit, since
+"that hash was not on this registry at that time" is a real finding and often
+the more useful one. The receipt's wording never borrows the verification
+panel's: the contract holds a hash and cannot see a bundle, so the only honest
+claim it can make is that a check happened.
+
 ### The web UI
 
 ```bash
@@ -722,6 +847,7 @@ searches for people by face; it has no business being reachable from off-box.
 | `sigil anchor` | 4 | anchor an existing bundle |
 | `sigil verify` | 5 | re-verify against chain state |
 | `sigil tamper` | — | produce an altered bundle to prove verification fails |
+| `python3 tools/verify_bundle.py` | — | recompute a bundle's hash with no sigil and no dependencies |
 | `sigil serve` | 1–5 | local web UI, streaming the run live |
 | `sigil chain info` / `reset` | — | inspect or wipe the chain backend |
 | `sigil chain records` | 5 | list what the registry holds, read from chain state |
@@ -740,29 +866,51 @@ Everything is optional; see `.env.example`. The knobs that matter most:
 and `SIGIL_SUBJECT_SALT` (change it and previously anchored records stop
 verifying against new probes — pick one and keep it).
 
+Two switches turn something *off* that is on for a reason, so they are worth
+naming here rather than leaving in the file:
+
+- `SIGIL_ALLOW_UNSAFE=1` (or `--allow-unsafe`) stops refusing adult and
+  leak-site candidates. What that costs is in [§3](#the-candidates-this-refuses-to-look-at).
+- `SIGIL_PUBLISH_PROBE=1` (or `--publish-probe`) uploads the probe to a
+  temporary public host so Google Lens can be asked about a local file — Lens
+  matches on a URL and will not take bytes, so without this the arm is
+  silently absent on a local path. It publishes a photograph of somebody's
+  face, which is why it is opt-in; the host is the one-hour bucket rather than
+  the permanent one, and the published URL never enters the evidence bundle.
+- `SIGIL_USER_AGENT` replaces the User-Agent that identifies this tool. Some
+  CDNs serve images only to something that looks like a browser; whether to
+  tell them you are one is a decision about a host that has said what it
+  wants, so it is yours rather than the default.
+
 ## Tests
 
 ```bash
-pytest -m "not network"   # 508 offline tests, 97% line coverage
+pytest -m "not network"   # 640 offline tests, 97% line coverage
 pytest -m network         # 3 tests against the live API and a live chain
 ```
 
-Both installs collect the same **508 offline tests**. Every insightface gate in
+Both installs collect the same **640 offline tests**. Every insightface gate in
 the suite is a runtime skip inside a test body rather than a collection-time
 one, so the extra changes how many tests *run*, not how many exist. What the
 two installs differ on is the skip count and the last coverage point:
 
 | install | passed | skipped | coverage |
 |---|---|---|---|
-| Quickstart `.[insight,dev]` | 507 | 1 | **97%** |
-| CI `.[dev]` | 500 | 8 | **96%** |
+| Quickstart `.[insight,dev]` | 638 | 1 | **97%** |
+| CI `.[dev]` | 631 | 8 | **96%** |
 
 The single skip in the full install is the opencv parametrisation of a test
 that only means anything for insightface; CI adds the seven that need the
 backend itself. CI installs `.[dev]` alone because the 300 MB model pack is not
 worth a minute on every push, and still enforces `--cov-fail-under=95`.
 
-That 508 is a 3.11-and-up figure. On 3.10 it is 500, because `tomllib` is not
+Both rows are measured rather than derived. The CI row is what this suite does
+with `insightface` genuinely unimportable, which is worth stating because the
+obvious way to fake that condition gets it wrong: `pytest.importorskip` catches
+`ModuleNotFoundError`, so a stub raising a plain `ImportError` turns seven
+skips into a failure and quietly reports a number CI would never produce.
+
+That 639 is a 3.11-and-up figure. On 3.10 it is 631, because `tomllib` is not
 in that stdlib and `tests/test_packaging.py` skips at import — a module-level
 skip drops its eight tests out of *collection* rather than reporting them as
 skipped, which is the one way a count stops being comparable between two runs.
